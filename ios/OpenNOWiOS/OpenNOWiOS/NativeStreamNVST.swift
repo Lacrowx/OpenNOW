@@ -1,7 +1,16 @@
 import CoreMedia
 import CoreVideo
 import Foundation
+#if canImport(WebRTC)
 import WebRTC
+typealias NativeStreamNVSTFrame = RTCVideoFrame
+#else
+/// Decoded frame handed to the renderer on platforms without the WebRTC runtime (tvOS).
+struct NativeStreamNVSTFrame: @unchecked Sendable {
+    let pixelBuffer: CVPixelBuffer
+    let time: CMTime
+}
+#endif
 
 struct NativeStreamVideoLiveness {
     enum Action: Equatable { case none, requestKeyframe, failed }
@@ -69,7 +78,7 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
     private let profile: StreamVideoProfile
     private let codec: NativeStreamVideoCodec
     private let displayFPS: Int
-    private let onFrame: @Sendable (RTCVideoFrame) -> Void
+    private let onFrame: @Sendable (NativeStreamNVSTFrame) -> Void
     private let onSample: @Sendable (NativeStreamNVSTSample) -> Void
     private let onFailure: @Sendable (String) -> Void
     private let onTermination: @Sendable (NvstSeatTermination) -> Void
@@ -123,7 +132,7 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
 
     init(allocation: ActiveSession, settings: AppSettings, profile: StreamVideoProfile,
          codec: NativeStreamVideoCodec, displayFPS: Int,
-         onFrame: @escaping @Sendable (RTCVideoFrame) -> Void,
+         onFrame: @escaping @Sendable (NativeStreamNVSTFrame) -> Void,
          onSample: @escaping @Sendable (NativeStreamNVSTSample) -> Void,
          onFailure: @escaping @Sendable (String) -> Void,
          onTermination: @escaping @Sendable (NvstSeatTermination) -> Void,
@@ -243,10 +252,14 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
         let callback = onFrame
         decoder.onPixelBuffer = { pixelBuffer, time, _ in
             // Keep the zero-copy P010 surface and its transfer attachments for the iOS HDR renderer.
+            #if canImport(WebRTC)
             let ns = Int64(clamping: Int((CMTimeGetSeconds(time) * 1_000_000_000).rounded()))
             let frame = RTCVideoFrame(buffer: RTCCVPixelBuffer(pixelBuffer: pixelBuffer), rotation: ._0, timeStampNs: ns)
             frame.timeStamp = Int32(truncatingIfNeeded: CMTimeConvertScale(time, timescale: 90_000, method: .default).value)
             callback(frame)
+            #else
+            callback(NativeStreamNVSTFrame(pixelBuffer: pixelBuffer, time: time))
+            #endif
         }
         let pipeline = NvstVideoPipeline(decoder: decoder, clock: clock,
             frameTimeMicroseconds: UInt32(1_000_000 / max(1, profile.fps)),

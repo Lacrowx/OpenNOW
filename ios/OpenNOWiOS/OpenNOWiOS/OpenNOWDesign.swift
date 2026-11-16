@@ -122,10 +122,18 @@ enum UIAccent: String, Codable, CaseIterable, Identifiable {
 enum OpenNOWPalette {
 
     // Surfaces that follow the system appearance.
+    #if os(tvOS)
+    // tvOS has no system background colours; use the dark values in both appearances.
+    static let surfaceBase = Color(hex: 0x090B0D)
+    static let surfaceRaised = Color(hex: 0x11161A)
+    static let surfaceInset = Color(hex: 0x171D22)
+    static let surfaceGrouped = Color(hex: 0x090B0D)
+    #else
     static let surfaceBase = dynamicColor(dark: Color(hex: 0x090B0D), light: Color(uiColor: .systemBackground))
     static let surfaceRaised = dynamicColor(dark: Color(hex: 0x11161A), light: Color(uiColor: .secondarySystemGroupedBackground))
     static let surfaceInset = dynamicColor(dark: Color(hex: 0x171D22), light: Color(uiColor: .tertiarySystemFill))
     static let surfaceGrouped = dynamicColor(dark: Color(hex: 0x090B0D), light: Color(uiColor: .systemGroupedBackground))
+    #endif
 
     // Surfaces that stay dark in both appearances. Box art and live video need a dark surround,
     // and a white catalog behind a dark game reads as two different applications.

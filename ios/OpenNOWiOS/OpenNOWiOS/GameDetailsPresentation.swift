@@ -47,32 +47,55 @@ struct GameDetailsPresentationModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .environment(\.gameDetailsTransition, GameDetailsTransitionContext(namespace: namespace, registry: registry))
-            .sheet(item: $selectedGame, onDismiss: {
-                registry.origin = nil
-                // A second presentation starts only after the native zoom has finished closing.
-                if let request = pendingLaunch {
-                    pendingLaunch = nil
-                    onLaunch(request.game, request.launchOption)
-                }
-            }) { game in
-                GameLaunchDetailsSheet(game: game) { option in
-                    pendingLaunch = GameLaunchRequest(game: game, launchOption: option)
-                    selectedGame = nil
-                }
-                .environmentObject(store)
-                #if DEBUG
-                .onAppear {
-                    if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--opennow-zoom-qa-") }) {
-                        NSLog("[GameDetailsQA] details appeared: %@; matched source: %@", game.id,
-                              registry.sourceID(for: game)?.uuidString ?? "none")
-                    }
-                }
-                #endif
-                .modifier(GameDetailsZoomDestination(
-                    sourceID: registry.sourceID(for: game),
-                    namespace: namespace
-                ))
+            // On tvOS the details are a full-screen page of the console shell, not a sheet.
+            #if os(tvOS)
+            .fullScreenCover(item: $selectedGame, onDismiss: detailsDismissed, content: details)
+            #else
+            .sheet(item: $selectedGame, onDismiss: detailsDismissed, content: details)
+            #endif
+    }
+
+    private func detailsDismissed() {
+        registry.origin = nil
+        // A second presentation starts only after the native zoom has finished closing.
+        if let request = pendingLaunch {
+            pendingLaunch = nil
+            onLaunch(request.game, request.launchOption)
+        }
+    }
+
+    private func details(for game: CloudGame) -> some View {
+        detailsContent(for: game) { option in
+            pendingLaunch = GameLaunchRequest(game: game, launchOption: option)
+            selectedGame = nil
+        }
+        .environmentObject(store)
+        #if DEBUG
+        .onAppear {
+            if ProcessInfo.processInfo.arguments.contains(where: { $0.hasPrefix("--opennow-zoom-qa-") }) {
+                NSLog("[GameDetailsQA] details appeared: %@; matched source: %@", game.id,
+                      registry.sourceID(for: game)?.uuidString ?? "none")
             }
+        }
+        #endif
+        .modifier(GameDetailsZoomDestination(
+            sourceID: registry.sourceID(for: game),
+            namespace: namespace
+        ))
+    }
+}
+
+extension GameDetailsPresentationModifier {
+    /// The iOS details sheet, or the console shell's details screen on tvOS.
+    @ViewBuilder
+    fileprivate func detailsContent(
+        for game: CloudGame, onLaunch: @escaping (GameLaunchOption?) -> Void
+    ) -> some View {
+        #if os(tvOS)
+        TVConsoleGameDetailView(game: game, onLaunch: onLaunch)
+        #else
+        GameLaunchDetailsSheet(game: game, onLaunch: onLaunch)
+        #endif
     }
 }
 

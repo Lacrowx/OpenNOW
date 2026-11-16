@@ -14,7 +14,8 @@ struct ContentView: View {
     var body: some View {
         Group {
             #if DEBUG
-            if let queuePosition = debugQueuePreviewPosition {
+            if let queuePosition = debugQueuePreviewPosition,
+               !ProcessInfo.processInfo.arguments.contains("--opennow-shell-preview") {
                 StreamLoadingView(coversBottomBar: true)
                     .task {
                         store.installDebugQueuePreview(position: queuePosition,
@@ -22,6 +23,8 @@ struct ContentView: View {
                     }
             } else if ProcessInfo.processInfo.arguments.contains("--opennow-intro-preview") {
                 IntroSetupView(onFinish: {})
+            } else if ProcessInfo.processInfo.arguments.contains("--opennow-signin-preview") {
+                LoginView(debugPrompt: LoginView.debugSamplePrompt)
             } else if ProcessInfo.processInfo.arguments.contains("--opennow-touch-layout-preview") {
                 NativeStreamTouchLayoutPreview()
             } else if ProcessInfo.processInfo.arguments.contains("--opennow-store-preview")
@@ -32,6 +35,16 @@ struct ContentView: View {
                         store.installDebugStorePreview()
                         if ProcessInfo.processInfo.arguments.contains("--opennow-console-preview") {
                             store.settings.consoleHomeEnabled = true
+                        }
+                    }
+            } else if ProcessInfo.processInfo.arguments.contains("--opennow-shell-preview") {
+                // With `--opennow-queue-preview=N` as well, a queued session sits over the shell.
+                MainTabView(initialPage: .store)
+                    .task {
+                        store.installDebugLibraryPreview()
+                        store.sessionHistory.installDebugSamples()
+                        if let queuePosition = debugQueuePreviewPosition {
+                            store.installDebugQueuePreview(position: queuePosition)
                         }
                     }
             } else if ProcessInfo.processInfo.arguments.contains("--opennow-server-picker-preview") {
@@ -51,7 +64,9 @@ struct ContentView: View {
             #if DEBUG
             guard debugQueuePreviewPosition == nil,
                   !ProcessInfo.processInfo.arguments.contains("--opennow-intro-preview"),
+                  !ProcessInfo.processInfo.arguments.contains("--opennow-signin-preview"),
                   !ProcessInfo.processInfo.arguments.contains("--opennow-store-preview"),
+                  !ProcessInfo.processInfo.arguments.contains("--opennow-shell-preview"),
                   !ProcessInfo.processInfo.arguments.contains("--opennow-details-preview"),
                   !ProcessInfo.processInfo.arguments.contains("--opennow-server-picker-preview") else { return }
             #endif
@@ -95,6 +110,13 @@ private struct IntroSetupView: View {
     @State private var step = Step.welcome
     let onFinish: () -> Void
 
+    #if os(tvOS)
+    /// A TV lays out in 1920 pt with far larger type; the phone column would be a narrow strip.
+    private static let columnWidth: CGFloat = .infinity
+    #else
+    private static let columnWidth: CGFloat = 680
+    #endif
+
     private enum Step: Int, CaseIterable {
         case welcome, appearance, streaming, play, ready, geforceNow
 
@@ -114,7 +136,12 @@ private struct IntroSetupView: View {
             case .welcome: return "Your games, ready wherever you are."
             case .appearance: return "A few details make the library feel like yours."
             case .streaming: return "Start with a profile that fits your connection."
-            case .play: return "Choose how touch input and the stream status appear."
+            case .play:
+                #if os(tvOS)
+                return "Choose whether the stream status shows while you play."
+                #else
+                return "Choose how touch input and the stream status appear."
+                #endif
             case .ready: return "You can change every choice later in Settings."
             case .geforceNow: return "OpenNOW uses your own GeForce NOW membership."
             }
@@ -125,7 +152,12 @@ private struct IntroSetupView: View {
             case .welcome: return "sparkles.tv"
             case .appearance: return "paintpalette"
             case .streaming: return "video.badge.waveform"
-            case .play: return "hand.tap"
+            case .play:
+                #if os(tvOS)
+                return "gamecontroller"
+                #else
+                return "hand.tap"
+                #endif
             case .ready: return "checkmark.seal"
             case .geforceNow: return "person.crop.circle.badge.checkmark"
             }
@@ -152,7 +184,7 @@ private struct IntroSetupView: View {
                         Spacer(minLength: 8)
                         footer
                     }
-                    .frame(maxWidth: 680, minHeight: max(0, proxy.size.height - 56), alignment: .topLeading)
+                    .frame(maxWidth: Self.columnWidth, minHeight: max(0, proxy.size.height - 56), alignment: .topLeading)
                     .padding(.horizontal, 24)
                     .padding(.vertical, 28)
                     .frame(maxWidth: .infinity)
@@ -255,19 +287,28 @@ private struct IntroSetupView: View {
             }
         case .play:
             introCard {
+                #if !os(tvOS)
                 Toggle("Finger mouse", isOn: $store.settings.fingerMouseEnabled)
                 if store.settings.fingerMouseEnabled {
                     Toggle("Tap clicks where you touch", isOn: $store.settings.touch.mouseDirectClick)
                 }
+                #endif
                 Toggle("Show stream status", isOn: $store.settings.showStatsOverlay)
+                #if os(tvOS)
+                Text("Frame rate and ping stay in a corner of the picture. The stream menu can show or hide them at any time.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                #else
                 Text("The iPhone time and system indicators stay visible during play.")
                     .font(.footnote).foregroundStyle(.secondary)
+                #endif
             }
         case .ready:
             introCard {
                 summaryRow("Appearance", value: store.settings.uiAccent.label)
                 summaryRow("Streaming", value: store.settings.streamPreset.label)
+                #if !os(tvOS)
                 summaryRow("Touch", value: store.settings.fingerMouseEnabled ? "Finger mouse" : "Off")
+                #endif
                 summaryRow("Stream status", value: store.settings.showStatsOverlay ? "Visible" : "Hidden")
                 Text("You can revisit these choices any time in Settings.")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -342,6 +383,20 @@ private struct IntroSetupView: View {
 
 private struct SplashView: View {
     var body: some View {
+        #if os(tvOS)
+        ZStack {
+            TVConsoleBackground(artwork: nil, tint: 0x1B2A42)
+            VStack(spacing: 16) {
+                BrandLogoView(size: 88)
+                Text("OpenNOW")
+                    .font(TVConsoleTheme.display(40))
+                    .foregroundStyle(TVConsoleTheme.label)
+                ProgressView()
+                    .padding(.top, 8)
+            }
+        }
+        .ignoresSafeArea()
+        #else
         ZStack {
             appBackground
             VStack(spacing: 16) {
@@ -353,6 +408,49 @@ private struct SplashView: View {
             }
         }
         .ignoresSafeArea()
+        #endif
+    }
+}
+
+/// Asks before a launch ends a game that is still running: a confirmation dialog on iOS, the
+/// console shell's own screen on tvOS.
+private struct LaunchConflictPrompt: ViewModifier {
+    @EnvironmentObject private var store: OpenNOWStore
+
+    func body(content: Content) -> some View {
+        #if os(tvOS)
+        content.fullScreenCover(item: Binding(
+            get: { store.pendingLaunchConflict },
+            set: { if $0 == nil { store.cancelPendingLaunch() } }
+        )) { conflict in
+            TVConsoleConflictView(conflict: conflict)
+                .environmentObject(store)
+        }
+        .modifier(TVConsoleRejoinPrompt())
+        #else
+        // `Text(verbatim:)` because the title is composed from a game name at runtime. Passing a
+        // dynamic string as a LocalizedStringKey puts an empty key in the string catalog and
+        // gives translators nothing to work with.
+        content.confirmationDialog(
+            Text(verbatim: store.pendingLaunchConflict?.title ?? ""),
+            isPresented: Binding(
+                get: { store.pendingLaunchConflict != nil },
+                set: { if !$0 { store.cancelPendingLaunch() } }
+            ),
+            titleVisibility: .visible,
+            presenting: store.pendingLaunchConflict
+        ) { conflict in
+            Button("End and Play \(conflict.request.game.title)", role: .destructive) {
+                Haptics.medium()
+                store.confirmPendingLaunch()
+            }
+            Button("Keep Playing \(conflict.runningGame.title)", role: .cancel) {
+                store.cancelPendingLaunch()
+            }
+        } message: { conflict in
+            Text(conflict.message)
+        }
+        #endif
     }
 }
 
@@ -387,6 +485,10 @@ struct MainTabView: View {
 
     @EnvironmentObject private var store: OpenNOWStore
     @StateObject private var catalogControllerShortcuts = CatalogControllerShortcutCoordinator()
+    #if os(tvOS)
+    /// The controller as the console shell sees it; shared with the screens shown above the shell.
+    @StateObject private var consoleInput = TVConsoleInput()
+    #endif
     @State private var selectedTab: Tab
     @State private var streamerAutoRetryCount = 0
     @State private var presentedStreamerSession: ActiveSession?
@@ -399,13 +501,21 @@ struct MainTabView: View {
     private static let maxStreamerAutoRetries = 3
 
     init(initialPage: AppLaunchPage) {
-        let initialTab: Tab
+        var initialTab: Tab
         switch initialPage {
         case .store:
             initialTab = .home
         case .library:
             initialTab = .library
         }
+        #if DEBUG
+        // `--opennow-shell-tab=settings` opens a tab directly, for screenshots without input.
+        if let name = ProcessInfo.processInfo.arguments
+            .first(where: { $0.hasPrefix("--opennow-shell-tab=") })?.split(separator: "=").last,
+           let tab = Tab(rawValue: String(name)) {
+            initialTab = tab
+        }
+        #endif
         _selectedTab = State(initialValue: initialTab)
     }
 
@@ -417,6 +527,9 @@ struct MainTabView: View {
         ZStack {
             if presentedStreamerSession == nil {
                 tabSurface
+                    #if os(tvOS)
+                    .environmentObject(consoleInput)
+                    #endif
                     .transition(.opacity)
             }
 
@@ -491,11 +604,20 @@ struct MainTabView: View {
         }
     }
 
+    /// tvOS cannot focus the sidebar's selection rows, so it always uses the tab bar.
+    private var usesSidebar: Bool {
+        #if os(tvOS)
+        false
+        #else
+        horizontalSizeClass == .regular
+        #endif
+    }
+
     private var tabSurface: some View {
         // A tab bar is the iPhone idiom and a sidebar is the iPad one. Splitting on size class
         // rather than device also covers Slide Over and Stage Manager, where an iPad is compact.
         Group {
-            if horizontalSizeClass == .regular {
+            if usesSidebar {
                 sidebarSurface
             } else {
                 tabBarSurface
@@ -505,7 +627,7 @@ struct MainTabView: View {
         .overlay {
             ZStack {
                 if store.queueOverlayVisible {
-                    StreamLoadingView(coversBottomBar: true)
+                    queueSurface
                         .environmentObject(store)
                         .ignoresSafeArea()
                         .zIndex(1000)
@@ -515,7 +637,7 @@ struct MainTabView: View {
         }
         .animation(queueSurfaceAnimation, value: store.queueOverlayVisible)
         .safeAreaInset(edge: .top) {
-            if horizontalSizeClass != .regular, store.canJumpBackToSession, !store.queueOverlayVisible {
+            if showsJumpBackBanner, store.canJumpBackToSession, !store.queueOverlayVisible {
                 JumpBackStatusBanner()
                     .environmentObject(store)
                     .padding(.horizontal)
@@ -524,30 +646,9 @@ struct MainTabView: View {
                     .transition(.move(edge: .top).combined(with: .opacity))
             }
         }
+        .modifier(LaunchConflictPrompt())
         // The report is presented over the tab surface rather than the streamer, so it survives
         // the streamer being torn down and never competes with the video layer for the screen.
-        // `Text(verbatim:)` because the title is composed from a game name at runtime. Passing a
-        // dynamic string as a LocalizedStringKey puts an empty key in the string catalog and
-        // gives translators nothing to work with.
-        .confirmationDialog(
-            Text(verbatim: store.pendingLaunchConflict?.title ?? ""),
-            isPresented: Binding(
-                get: { store.pendingLaunchConflict != nil },
-                set: { if !$0 { store.cancelPendingLaunch() } }
-            ),
-            titleVisibility: .visible,
-            presenting: store.pendingLaunchConflict
-        ) { conflict in
-            Button("End and Play \(conflict.request.game.title)", role: .destructive) {
-                Haptics.medium()
-                store.confirmPendingLaunch()
-            }
-            Button("Keep Playing \(conflict.runningGame.title)", role: .cancel) {
-                store.cancelPendingLaunch()
-            }
-        } message: { conflict in
-            Text(conflict.message)
-        }
         .sheet(item: Binding(
             get: { store.sessionReport },
             set: { if $0 == nil { store.dismissSessionReport() } }
@@ -591,6 +692,60 @@ struct MainTabView: View {
         }
     }
 
+    /// The iPad sidebar and the tvOS console Home each give the running session a place of their own.
+    private var showsJumpBackBanner: Bool {
+        #if os(tvOS)
+        false
+        #else
+        !usesSidebar
+        #endif
+    }
+
+    @ViewBuilder
+    private var queueSurface: some View {
+        #if os(tvOS)
+        TVConsoleQueueView()
+        #else
+        StreamLoadingView(coversBottomBar: true)
+        #endif
+    }
+
+    #if os(tvOS)
+    private var tabBarSurface: some View {
+        TVConsoleShell(route: consoleRoute) { route in
+            destination(for: Self.tab(for: route))
+        }
+        // The queue screen lies over the shell without being modal; focus must not reach under it.
+        .disabled(store.queueOverlayVisible)
+    }
+
+    /// The console shell's pages are these tabs under its own names: its Home takes the Home
+    /// tab's place, and its Store (the whole catalog) the Browse tab's.
+    private var consoleRoute: Binding<TVConsoleRoute> {
+        Binding(
+            get: {
+                switch selectedTab {
+                case .home: return .home
+                case .browse: return .store
+                case .library: return .library
+                case .sessions: return .sessions
+                case .settings: return .settings
+                }
+            },
+            set: { selectedTab = Self.tab(for: $0) }
+        )
+    }
+
+    private static func tab(for route: TVConsoleRoute) -> Tab {
+        switch route {
+        case .home: return .home
+        case .store: return .browse
+        case .library: return .library
+        case .sessions: return .sessions
+        case .settings: return .settings
+        }
+    }
+    #else
     private var tabBarSurface: some View {
         TabView(selection: $selectedTab) {
             ForEach(Tab.allCases, id: \.self) { tab in
@@ -601,6 +756,7 @@ struct MainTabView: View {
         }
         .tint(brandAccent)
     }
+    #endif
 
     private var sidebarSurface: some View {
         NavigationSplitView(columnVisibility: $sidebarVisibility) {
@@ -642,9 +798,15 @@ struct MainTabView: View {
     @ViewBuilder
     private func destination(for tab: Tab) -> some View {
         switch tab {
+        #if os(tvOS)
+        case .home: TVConsoleHomeView(openLibrary: { selectedTab = .library })
+        case .browse: TVConsoleStoreView()
+        case .library: TVConsoleLibraryView()
+        #else
         case .home: HomeView()
         case .browse: BrowseView()
         case .library: LibraryView()
+        #endif
         case .sessions: StreamSessionsView(history: store.sessionHistory)
         case .settings: SettingsView()
         }
@@ -855,6 +1017,27 @@ extension View {
         }
     }
 
+    /// For a page pushed inside a tab. On tvOS the tab bar stays reachable above a pushed page, and
+    /// Back leaves the app while the tab bar has focus instead of going up a level, so it is hidden.
+    func hidingTabBarWhenPushed() -> some View {
+        #if os(tvOS)
+        toolbar(.hidden, for: .tabBar)
+        #else
+        self
+        #endif
+    }
+
+    /// For a row that only shows information. tvOS scrolls a list by moving focus, and a page with
+    /// nothing to focus cannot be left with Back, so there the row takes focus and Select does nothing.
+    @ViewBuilder
+    func readableRowOnTV() -> some View {
+        #if os(tvOS)
+        Button {} label: { self }
+        #else
+        self
+        #endif
+    }
+
     @ViewBuilder
     func searchableCompat(
         text: Binding<String>,
@@ -862,6 +1045,9 @@ extension View {
         placement: SearchFieldPlacement,
         prompt: String
     ) -> some View {
+        #if os(tvOS)
+        self.searchable(text: text, placement: placement, prompt: Text(prompt))
+        #else
         if #available(iOS 17.0, tvOS 17.0, macOS 14.0, *) {
             self.searchable(
                 text: text,
@@ -876,6 +1062,7 @@ extension View {
                 prompt: Text(prompt)
             )
         }
+        #endif
     }
 }
 
@@ -914,7 +1101,13 @@ private struct JumpBackStatusBanner: View {
     private var subtitle: String {
         if let session = store.activeSession {
             if store.sessionAvailability == .checking { return "Checking cloud session…" }
-            if store.sessionAvailability == .unverified { return "Status unavailable · Tap to check" }
+            if store.sessionAvailability == .unverified {
+                #if os(tvOS)
+                return "Status unavailable · Select to check"
+                #else
+                return "Status unavailable · Tap to check"
+                #endif
+            }
             return subtitle(for: session.status, queuePosition: session.queuePosition)
         }
         return "Check cloud session"

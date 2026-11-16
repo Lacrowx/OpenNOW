@@ -112,9 +112,14 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
         guard unit == nil else { return }
         do {
             let session = AVAudioSession.sharedInstance()
+            #if os(tvOS)
+            let microphoneOptions: AVAudioSession.CategoryOptions = []
+            #else
+            let microphoneOptions: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetoothHFP]
+            #endif
             try session.setCategory(capturesMicrophone ? .playAndRecord : .playback,
                 mode: capturesMicrophone ? .default : .moviePlayback,
-                options: capturesMicrophone ? [.defaultToSpeaker, .allowBluetoothHFP] : [])
+                options: capturesMicrophone ? microphoneOptions : [])
             try session.setPreferredSampleRate(outputSampleRate)
             try session.setPreferredIOBufferDuration(0.005)
             if capturesMicrophone, let uid = preferredInputDeviceUID {

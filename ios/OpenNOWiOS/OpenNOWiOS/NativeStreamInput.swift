@@ -663,7 +663,13 @@ private final class NativeStreamHapticPlayback {
     static let loopDuration: TimeInterval = 1
 
     let engine: CHHapticEngine
+    #if os(tvOS)
+    /// tvOS's controller haptics service drops the connection when an advanced (looping) player
+    /// is prepared, so a plain player runs back-to-back events for ten minutes instead.
+    let player: CHHapticPatternPlayer
+    #else
     let player: CHHapticAdvancedPatternPlayer
+    #endif
     let controllerIdentifier: ObjectIdentifier?
     var isPlaying = false
     var lastProfile: NativeStreamRumbleProfile?
@@ -672,6 +678,21 @@ private final class NativeStreamHapticPlayback {
     init(engine: CHHapticEngine, controllerIdentifier: ObjectIdentifier?) throws {
         self.engine = engine
         self.controllerIdentifier = controllerIdentifier
+        #if os(tvOS)
+        // A continuous event lasts at most 30 seconds.
+        let events = (0..<20).map { index in
+            CHHapticEvent(
+                eventType: .hapticContinuous,
+                parameters: [
+                    CHHapticEventParameter(parameterID: .hapticIntensity, value: 1),
+                    CHHapticEventParameter(parameterID: .hapticSharpness, value: 0.5)
+                ],
+                relativeTime: TimeInterval(index) * 30,
+                duration: 30
+            )
+        }
+        player = try engine.makePlayer(with: CHHapticPattern(events: events, parameters: []))
+        #else
         let event = CHHapticEvent(
             eventType: .hapticContinuous,
             parameters: [
@@ -685,6 +706,7 @@ private final class NativeStreamHapticPlayback {
         player = try engine.makeAdvancedPlayer(with: pattern)
         player.loopEnabled = true
         player.loopEnd = Self.loopDuration
+        #endif
     }
 
     func stopPlayer() {
@@ -2105,7 +2127,7 @@ final class NativeStreamInputBridge {
     }
 
     private func playLegacyPhoneRumble(_ profile: NativeStreamRumbleProfile) -> Bool {
-        #if canImport(UIKit)
+        #if canImport(UIKit) && !os(tvOS)
         let style: UIImpactFeedbackGenerator.FeedbackStyle = profile.sharpnessControl < 0 ? .heavy : .medium
         let generator = UIImpactFeedbackGenerator(style: style)
         generator.prepare()

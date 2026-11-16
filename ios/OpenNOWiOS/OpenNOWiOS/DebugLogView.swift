@@ -88,6 +88,7 @@ struct DebugLogView: View {
                     ForEach(visibleEntries) { entry in
                         NavigationLink {
                             DebugLogDetailView(entry: entry)
+                                .hidingTabBarWhenPushed()
                         } label: {
                             row(entry)
                         }
@@ -144,6 +145,16 @@ private struct DebugLogDetailView: View {
     let entry: DiagnosticsTraceEntry
 
     var body: some View {
+        #if os(tvOS)
+        // tvOS scrolls by moving focus, so the entry is a list of its lines. It has no clipboard.
+        List(Array(entry.rendered.split(separator: "\n", omittingEmptySubsequences: false).enumerated()), id: \.offset) { line in
+            Text(line.element)
+                .font(.caption2.monospaced())
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .readableRowOnTV()
+        }
+        .navigationTitle(entry.shortPath)
+        #else
         ScrollView([.vertical, .horizontal]) {
             Text(entry.rendered)
                 .font(.caption2.monospaced())
@@ -164,5 +175,6 @@ private struct DebugLogDetailView: View {
                 }
             }
         }
+        #endif
     }
 }

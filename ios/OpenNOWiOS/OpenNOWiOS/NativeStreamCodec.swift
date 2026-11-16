@@ -13,12 +13,17 @@ struct NativeStreamCodecCapability: Equatable {
     let webRTCProfileSummary: [String]
 
     var launchSafe: Bool {
+        #if os(tvOS)
+        // No WebRTC runtime on tvOS: the native receiver only needs hardware decode.
+        return videoToolboxHardwareDecode
+        #else
         switch codec {
         case .h264:
             return webRTCSupported
         case .h265, .av1:
             return videoToolboxHardwareDecode && webRTCSupported
         }
+        #endif
     }
 }
 

@@ -7,8 +7,24 @@ struct LoginView: View {
     @State private var signInTask: Task<Void, Never>?
     @State private var showingProviderChooser = false
     private let qrContext = CIContext()
+    #if DEBUG
+    /// `--opennow-signin-preview`: a device code to show without contacting NVIDIA.
+    var debugPrompt: DeviceLoginPrompt?
+    static let debugSamplePrompt = DeviceLoginPrompt(
+        userCode: "ABCD-EFGH", verificationURL: URL(string: "https://www.nvidia.com/link")!,
+        expiresAt: Date().addingTimeInterval(300))
+    #endif
 
     var body: some View {
+        #if os(tvOS)
+        TVConsoleSignInView(
+            prompt: tvPrompt,
+            qrCode: tvPrompt.flatMap { makeQRCode($0.verificationURL.absoluteString) },
+            onSignIn: handleSignIn,
+            onQRCode: handleSignInWithCode,
+            onCancel: { signInTask?.cancel() }
+        )
+        #else
         NavigationStack {
             List {
                 Section {
@@ -71,7 +87,7 @@ struct LoginView: View {
 
                     #if os(tvOS)
                     if !store.tvAuthLogs.isEmpty {
-                        DisclosureGroup("Authentication Log") {
+                        Section("Authentication Log") {
                             ForEach(Array(store.tvAuthLogs.enumerated()), id: \.offset) { _, line in
                                 Text(line)
                                     .font(.footnote.monospaced())
@@ -102,9 +118,7 @@ struct LoginView: View {
 
                     if (store.providers.first { $0.idpId == store.settings.selectedProviderIdpId }?.code ?? "NVIDIA").uppercased() == "NVIDIA" {
                         Button {
-                            Haptics.medium()
-                            signInTask?.cancel()
-                            signInTask = Task { await store.signInWithCode() }
+                            handleSignInWithCode()
                         } label: {
                             Label("Sign in with a QR code", systemImage: "qrcode")
                         }
@@ -134,12 +148,29 @@ struct LoginView: View {
                 .environmentObject(store)
             }
         }
+        #endif
     }
+
+    #if os(tvOS)
+    private var tvPrompt: DeviceLoginPrompt? {
+        #if DEBUG
+        debugPrompt ?? store.deviceLoginPrompt
+        #else
+        store.deviceLoginPrompt
+        #endif
+    }
+    #endif
 
     private func handleSignIn() {
         Haptics.medium()
         signInTask?.cancel()
         signInTask = Task { await store.signIn() }
+    }
+
+    private func handleSignInWithCode() {
+        Haptics.medium()
+        signInTask?.cancel()
+        signInTask = Task { await store.signInWithCode() }
     }
 
     private var selectedProviderName: String {

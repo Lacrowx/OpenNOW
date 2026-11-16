@@ -3108,6 +3108,8 @@ struct GameLaunchDetailsSheet: View {
                 if !game.capabilityBadges.isEmpty {
                     GameCapabilityBadges(labels: game.capabilityBadges)
                 }
+                // tvOS has no clipboard.
+                #if !os(tvOS)
                 if let appID = game.launchAppId ?? game.uuid {
                     Button {
                         UIPasteboard.general.string = appID
@@ -3117,6 +3119,7 @@ struct GameLaunchDetailsSheet: View {
                     }
                     .font(.footnote)
                 }
+                #endif
             }
 
             let externalStores = launcherOptions.compactMap { option -> (String, URL)? in
@@ -4086,6 +4089,11 @@ private struct ControllerFocusableCompatModifier: ViewModifier {
 
     @ViewBuilder
     func body(content: Content) -> some View {
+        #if os(tvOS)
+        // tvOS buttons are focusable already; wrapping one in `.focusable()` moves focus to the
+        // wrapper and the Select press never reaches the button's action.
+        content
+        #else
         if #available(iOS 17.0, *) {
             content.focusable()
         } else {
@@ -4097,6 +4105,7 @@ private struct ControllerFocusableCompatModifier: ViewModifier {
                 )
             }
         }
+        #endif
     }
 }
 

@@ -17,6 +17,7 @@ struct CodecDiagnosticsView: View {
                 if let capability = report.capability(for: codec) {
                     Section {
                         verdictRow(capability)
+                            .readableRowOnTV()
                         checkRow(
                             "Hardware decoder",
                             passed: capability.videoToolboxHardwareDecode,
@@ -24,6 +25,8 @@ struct CodecDiagnosticsView: View {
                                 ? "VideoToolbox reports hardware support"
                                 : "No hardware path — software decoding is too slow to stream"
                         )
+                        // tvOS streams through the native receiver only; it has no WebRTC build.
+                        #if !os(tvOS)
                         checkRow(
                             "WebRTC support",
                             passed: capability.webRTCSupported,
@@ -38,6 +41,7 @@ struct CodecDiagnosticsView: View {
                                     .multilineTextAlignment(.trailing)
                             }
                         }
+                        #endif
                     } header: {
                         Text(codec.rawValue.uppercased())
                     } footer: {
@@ -49,6 +53,9 @@ struct CodecDiagnosticsView: View {
             Section {
                 LabeledContent("Device", value: OpenNOWPlatform.modelIdentifier)
                 LabeledContent("Chosen for auto", value: report.launchSafeCodec(preferred: "Auto").rawValue.uppercased())
+                    .readableRowOnTV()
+                // tvOS has no clipboard.
+                #if !os(tvOS)
                 Button {
                     #if canImport(UIKit)
                     UIPasteboard.general.string = report.summary
@@ -56,10 +63,15 @@ struct CodecDiagnosticsView: View {
                 } label: {
                     Label("Copy Probe Summary", systemImage: "doc.on.doc")
                 }
+                #endif
             } header: {
                 Text("Result")
             } footer: {
+                #if os(tvOS)
+                Text("A codec is usable when this Apple TV decodes it in hardware, because a software fallback would drop frames rather than degrade gracefully.")
+                #else
                 Text("H.264 only needs WebRTC support because every device that runs iOS 16 decodes it in hardware. H.265 and AV1 need both checks to pass, because a software fallback would drop frames rather than degrade gracefully.")
+                #endif
             }
         }
         .navigationTitle("Decoders")

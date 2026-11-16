@@ -6686,6 +6686,10 @@ final class OpenNOWStore: ObservableObject {
             loadedSettings.preferredRegion = ""
         }
         loadedSettings.normalizeStreamDefaults()
+        #if os(tvOS)
+        // tvOS has no WebRTC runtime; every session uses the native NVST receiver.
+        loadedSettings.experimentalNativeNVSTEnabled = true
+        #endif
         settings = loadedSettings
         let retainedWallpaperFilename = loadedSettings.catalogWallpaperFilename
         Task.detached(priority: .utility) {
@@ -9197,6 +9201,9 @@ final class OpenNOWStore: ObservableObject {
         settings = .default
         settings.normalizeStreamDefaults()
         persistSettings()
+        #if os(tvOS)
+        TVDisplayMode.select(nil, save: true)
+        #endif
         CatalogWallpaperStorage.pruneManagedWallpapers(keeping: nil)
         refreshTrackedSessionSurface()
     }
@@ -9232,6 +9239,9 @@ final class OpenNOWStore: ObservableObject {
         settings = .default
         settings.normalizeStreamDefaults()
         persistSettings()
+        #if os(tvOS)
+        TVDisplayMode.select(nil, save: true)
+        #endif
         CatalogWallpaperStorage.pruneManagedWallpapers(keeping: nil)
         clearAccountScopedState()
     }
@@ -10383,7 +10393,12 @@ final class OpenNOWStore: ObservableObject {
     }
 
     private func loadCachedCatalog(for session: AuthSession) async -> CachedCatalogSnapshot? {
-        guard let data = defaults.data(forKey: catalogCacheKey(for: session.user.userId)) else {
+        #if os(tvOS)
+        let stored = catalogCacheFileURL(for: session.user.userId).flatMap { try? Data(contentsOf: $0) }
+        #else
+        let stored = defaults.data(forKey: catalogCacheKey(for: session.user.userId))
+        #endif
+        guard let data = stored else {
             return nil
         }
         return await catalogSnapshotCodec.decode(data)
@@ -10455,7 +10470,11 @@ final class OpenNOWStore: ObservableObject {
         let generation = catalogCacheGeneration
         guard let encoded = await catalogSnapshotCodec.encode(snapshot), !Task.isCancelled,
               generation == catalogCacheGeneration, accountIsCurrent(session.user.userId) else { return }
+        #if os(tvOS)
+        if let url = catalogCacheFileURL(for: session.user.userId) { try? encoded.write(to: url, options: .atomic) }
+        #else
         defaults.set(encoded, forKey: catalogCacheKey(for: session.user.userId))
+        #endif
         defaults.removeObject(forKey: legacyLibraryGamesCacheKey(for: session.user.userId))
     }
 
@@ -10467,6 +10486,9 @@ final class OpenNOWStore: ObservableObject {
     }
 
     private func removeCachedCatalog(forUserId userId: String) {
+        #if os(tvOS)
+        if let url = catalogCacheFileURL(for: userId) { try? FileManager.default.removeItem(at: url) }
+        #endif
         defaults.removeObject(forKey: catalogCacheKey(for: userId))
         defaults.removeObject(forKey: legacyLibraryGamesCacheKey(for: userId))
     }
@@ -10475,7 +10497,23 @@ final class OpenNOWStore: ObservableObject {
         defaults.removeObject(forKey: accountCacheKey(for: userId))
     }
 
+    #if os(tvOS)
+    /// tvOS aborts an app whose UserDefaults exceed 1 MB, so the catalog snapshot lives in Caches instead.
+    private func catalogCacheFileURL(for userId: String) -> URL? {
+        FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first?
+            .appendingPathComponent(catalogCacheKey(for: userId) + ".json")
+    }
+    #endif
+
     private func removeAllCachedCatalog() {
+        #if os(tvOS)
+        if let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first,
+           let files = try? FileManager.default.contentsOfDirectory(at: caches, includingPropertiesForKeys: nil) {
+            for file in files where file.lastPathComponent.hasPrefix("\(catalogCacheKeyPrefix).") {
+                try? FileManager.default.removeItem(at: file)
+            }
+        }
+        #endif
         let prefixes = [
             "\(catalogCacheKeyPrefix).",
             "\(legacyLibraryGamesCacheKeyPrefix)."

@@ -12,6 +12,9 @@ final class OpenNOWAppDelegate: NSObject, UIApplicationDelegate {
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
         OpenNOWImageCache.configureURLCache()
+        #if os(tvOS)
+        TVDisplayMode.start()
+        #endif
         if ProcessInfo.processInfo.arguments.contains("--opennow-streamer-self-test") {
             NativeStreamSelfTest.run()
         }
@@ -22,10 +25,12 @@ final class OpenNOWAppDelegate: NSObject, UIApplicationDelegate {
         OpenNOWImageCache.shared.removeAll()
     }
 
+    #if os(iOS)
     func application(_ application: UIApplication,
                      supportedInterfaceOrientationsFor window: UIWindow?) -> UIInterfaceOrientationMask {
         StreamOrientation.supportedOrientations
     }
+    #endif
 
 }
 

@@ -237,6 +237,8 @@ struct BugReportView: View {
                     .font(.footnote.monospaced())
                     .textSelection(.enabled)
                     .accessibilityLabel("Report ID \(reference)")
+                // tvOS has no clipboard.
+                #if !os(tvOS)
                 Button {
                     #if canImport(UIKit)
                     UIPasteboard.general.string = reference
@@ -248,6 +250,7 @@ struct BugReportView: View {
                           systemImage: reportIDCopied ? "checkmark" : "doc.on.doc")
                 }
                 .buttonStyle(.bordered)
+                #endif
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(OpenNOWSpacing.md)

@@ -24,10 +24,8 @@ struct StreamLoadingView: View {
     if let position = visibleQueuePosition {
       return "Queue position \(position)"
     }
-    if let adState = store.effectiveAdState {
-      if adState.opportunity?.queuePaused == true || adState.isQueuePaused == true {
-        return "Queue paused"
-      }
+    if store.isQueuePausedForAd {
+      return "Queue paused"
     }
     if store.activeSession?.seatSetupStep == 1 {
       return "Waiting for a rig"
@@ -36,14 +34,11 @@ struct StreamLoadingView: View {
   }
 
   private var queueAdNotice: String? {
-    guard !isPastQueue, let adState = store.effectiveAdState else { return nil }
-    if adState.opportunity?.queuePaused == true || adState.isQueuePaused == true {
+    guard !isPastQueue else { return nil }
+    if store.isQueuePausedForAd {
       return "Queue paused"
     }
-    if store.activeQueueAd != nil, adState.sessionAdsRequired ?? adState.isAdsRequired {
-      return "Watch ad to continue"
-    }
-    return nil
+    return store.isQueueAdRequired ? "Watch ad to continue" : nil
   }
 
   var body: some View {
@@ -207,6 +202,20 @@ struct StreamLoadingView: View {
 
 }
 
+extension OpenNOWStore {
+  /// The queue is held until an advertisement has played.
+  var isQueuePausedForAd: Bool {
+    guard let adState = effectiveAdState else { return false }
+    return adState.opportunity?.queuePaused == true || adState.isQueuePaused == true
+  }
+
+  /// An advertisement is on offer and the session will not move on without it.
+  var isQueueAdRequired: Bool {
+    guard let adState = effectiveAdState, activeQueueAd != nil else { return false }
+    return adState.sessionAdsRequired ?? adState.isAdsRequired
+  }
+}
+
 struct QueueActionButtonStyle: ButtonStyle {
   @Environment(\.openNowAccent) private var accent
 
@@ -224,7 +233,8 @@ struct QueueActionButtonStyle: ButtonStyle {
   }
 }
 
-private struct QueueTrendStrip: View {
+/// Also shown by the tvOS console queue screen.
+struct QueueTrendStrip: View {
   let trend: QueueTrendEstimator
 
   @Environment(\.openNowAccent) private var accent
@@ -278,7 +288,8 @@ private struct AdVideoView: UIViewControllerRepresentable {
   }
 }
 
-private struct QueueAdPlayerCard: View {
+/// Also shown by the tvOS console queue screen.
+struct QueueAdPlayerCard: View {
   @EnvironmentObject private var store: OpenNOWStore
   @Environment(\.openURL) private var openURL
   let ad: SessionAdInfo

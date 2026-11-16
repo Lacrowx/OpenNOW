@@ -886,6 +886,9 @@ struct StreamerView: View {
     #else
     private let session: ActiveSession
     private let onClose: () -> Void
+    #if os(tvOS)
+    private let makeTVCoordinator: @MainActor () -> TVStreamCoordinator
+    #endif
 
     init(
         session: ActiveSession,
@@ -916,6 +919,15 @@ struct StreamerView: View {
     ) {
         self.session = session
         self.onClose = onClose
+        #if os(tvOS)
+        makeTVCoordinator = {
+            TVStreamCoordinator(session: session, settings: settings, membershipTier: membershipTier,
+                sessionHistory: sessionHistory, onStatsOverlayChange: onStatsOverlayChange,
+                onRuntimeSample: onRuntimeSample, onTransportStable: onTransportStable,
+                onStreamTermination: onStreamTermination, onTransportFailure: onTransportFailure,
+                onClose: onClose, onRetry: onRetry)
+        }
+        #endif
         _ = settings
         _ = membershipTier
         _ = onTouchLayoutChange
@@ -939,6 +951,9 @@ struct StreamerView: View {
     }
 
     var body: some View {
+        #if os(tvOS)
+        TVStreamerView(make: makeTVCoordinator)
+        #else
         ZStack {
             Color.black.ignoresSafeArea()
             VStack(spacing: 16) {
@@ -958,6 +973,7 @@ struct StreamerView: View {
             .padding()
             .foregroundStyle(.white)
         }
+        #endif
     }
     #endif
 }

@@ -269,7 +269,13 @@ struct LibraryView: View {
             return "Try another title, or clear your filters to search all the games in your library."
         }
         if criteria.hasFilters { return "Try a different launcher or remove a filter to see more of your games." }
-        if criteria.favoritesOnly { return "Add a favorite from a game’s details or its touch-and-hold menu. It’ll be waiting here." }
+        if criteria.favoritesOnly {
+            #if os(tvOS)
+            return "Add a favorite from a game’s details or its press-and-hold menu. It’ll be waiting here."
+            #else
+            return "Add a favorite from a game’s details or its touch-and-hold menu. It’ll be waiting here."
+            #endif
+        }
         if store.accountConnectors.contains(where: \.isLinked) {
             return "Your linked stores haven’t returned any owned games yet. Refresh your library, or add a game manually."
         }
@@ -564,8 +570,9 @@ struct LibraryCatalogIndex: Sendable {
     }
 }
 
+/// Shared with the tvOS console Library, which shows the same games in its own layout.
 @MainActor
-private final class LibraryPresentationModel: ObservableObject {
+final class LibraryPresentationModel: ObservableObject {
     @Published private(set) var items: [LibraryGameItem] = []
     @Published private(set) var totalCount = 0
     @Published private(set) var stores: [String] = []

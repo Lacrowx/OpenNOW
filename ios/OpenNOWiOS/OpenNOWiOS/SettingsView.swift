@@ -7,6 +7,11 @@ import UIKit
 import PhotosUI
 import UniformTypeIdentifiers
 #endif
+#if os(tvOS)
+import AVFoundation
+/// A menu picker on tvOS shows only its value; settings rows pair it with its title.
+private typealias Picker = TVLabeledPicker
+#endif
 
 private enum SettingsCategory: String, CaseIterable, Hashable, Identifiable {
     case general
@@ -35,7 +40,12 @@ private enum SettingsCategory: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .general: return "Privacy, welcome tour, and app data"
         case .stream: return "Resolution, codec, HDR, region"
-        case .input: return "Mouse, keyboard, touch, controller"
+        case .input:
+            #if os(tvOS)
+            return "Mouse, keyboard, controller"
+            #else
+            return "Mouse, keyboard, touch, controller"
+            #endif
         case .interface: return "Appearance, catalog, stats, and sessions"
         case .advanced: return "Experimental features and diagnostics"
         case .account: return "Sign-in, storage, connected stores"
@@ -47,8 +57,21 @@ private enum SettingsCategory: String, CaseIterable, Hashable, Identifiable {
         switch self {
         case .general: return [.privacy, .appData]
         case .stream: return [.streamQuality, .video, .connection]
-        case .input: return [.keyboard, .pointer, .nativeTouch, .touchController, .controller]
-        case .interface: return [.appearance, .catalog, .stats, .streamControls, .sessions]
+        case .input:
+            #if os(tvOS)
+            // The touch pages have no settings on a TV, and a page with nothing to focus cannot
+            // be left with Back: the press goes to the system, which closes the app.
+            return [.keyboard, .pointer, .controller]
+            #else
+            return [.keyboard, .pointer, .nativeTouch, .touchController, .controller]
+            #endif
+        case .interface:
+            #if os(tvOS)
+            // Immersive mode and keep-awake belong to the iOS stream screen.
+            return [.appearance, .catalog, .stats, .sessions]
+            #else
+            return [.appearance, .catalog, .stats, .streamControls, .sessions]
+            #endif
         case .advanced: return [.experimental, .diagnostics]
         case .account, .about: return []
         }
@@ -121,6 +144,10 @@ struct SettingsView: View {
     @State private var showingTouchLayoutResetConfirmation = false
     @State private var showingSessionProxyWarning = false
     @State private var showingAddAccountProvider = false
+    #if os(tvOS)
+    @State private var tvSection = SettingsCategory.general
+    @State private var tvPath = NavigationPath()
+    #endif
     @State private var connectorPendingDisconnect: AccountConnector?
     #if os(iOS)
     @State private var selectedCatalogWallpaperItem: PhotosPickerItem?
@@ -147,8 +174,22 @@ struct SettingsView: View {
         return values
     }
 
+    /// On tvOS the console layout has the only stack: a stack around it takes over the pushes and
+    /// shows sub-pages over the whole screen instead of inside the panel.
+    @ViewBuilder
+    private func settingsStack<Root: View>(@ViewBuilder _ root: () -> Root) -> some View {
+        #if os(tvOS)
+        root()
+        #else
+        NavigationStack(path: $path) { root() }
+        #endif
+    }
+
     var body: some View {
-        NavigationStack(path: $path) {
+        settingsStack {
+            #if os(tvOS)
+            tvConsoleSettings
+            #else
             List {
                 accountLandingSection
                 settingsCategorySection
@@ -174,6 +215,12 @@ struct SettingsView: View {
                 Form {
                     settingsDetailContent(for: category)
                 }
+                #if os(tvOS)
+                // The default tvOS picker pushes its own page onto this path-bound stack and
+                // leaves it blank after a choice; a menu picker never touches the stack.
+                .pickerStyle(.menu)
+                #endif
+                .hidingTabBarWhenPushed()
                 .navigationTitle(category.title)
                 .navigationBarTitleDisplayMode(.inline)
             }
@@ -181,9 +228,14 @@ struct SettingsView: View {
                 Form {
                     settingsPageContent(for: page)
                 }
+                #if os(tvOS)
+                .pickerStyle(.menu)
+                #endif
+                .hidingTabBarWhenPushed()
                 .navigationTitle(page.title)
                 .navigationBarTitleDisplayMode(.inline)
             }
+            #endif
         }
         .confirmationDialog("Reset settings?", isPresented: $showingResetConfirmation, titleVisibility: .visible) {
             Button("Reset Settings", role: .destructive) {
@@ -295,6 +347,51 @@ struct SettingsView: View {
         }
     }
 
+    #if os(tvOS)
+    /// Console two-panel layout: sections in a rail, the open section's pages and rows in a panel
+    /// with its own stack, driven by `tvPath` (`path` is the iOS stack's).
+    private var tvConsoleSettings: some View {
+        TVConsoleSettingsLayout(
+            sections: SettingsCategory.allCases.map { category in
+                TVConsoleSettingsSection(
+                    id: category, title: category.title, symbol: category.symbolName,
+                    color: tvConsoleColor(category),
+                    ink: category == .advanced ? TVConsoleTheme.label : TVConsoleTheme.faceText
+                )
+            },
+            selection: $tvSection, isPushed: !tvPath.isEmpty
+        ) {
+            NavigationStack(path: $tvPath) {
+                Form { settingsDetailContent(for: tvSection) }
+                    .tvConsoleFormHeading(tvSection.title)
+                    .navigationDestination(for: SettingsPage.self) { page in
+                        Form { settingsPageContent(for: page) }
+                            .tvConsoleFormHeading(page.title)
+                    }
+            }
+        }
+        .onChangeCompat(of: tvSection) { _ in tvPath = NavigationPath() }
+        .onChangeCompat(of: store.pendingSettingsRoute) { route in
+            guard let route else { return }
+            tvSection = SettingsCategory(route)
+            tvPath = NavigationPath()
+            store.pendingSettingsRoute = nil
+        }
+    }
+
+    private func tvConsoleColor(_ category: SettingsCategory) -> Color {
+        switch category {
+        case .general: return TVConsoleTheme.coral
+        case .stream: return TVConsoleTheme.violet
+        case .input: return TVConsoleTheme.mint
+        case .interface: return TVConsoleTheme.yellow
+        case .advanced: return Color(hex: 0x252A35)
+        case .account: return store.settings.uiAccent.color
+        case .about: return TVConsoleTheme.face
+        }
+    }
+    #endif
+
     @ViewBuilder
     private var accountLandingSection: some View {
         if accountLandingVisible {
@@ -349,17 +446,28 @@ struct SettingsView: View {
     }
 
     private var matchingPages: [SettingsPage] {
-        SettingsPage.allCases.filter { $0.matches(searchText) }
+        // Only pages a category lists: tvOS leaves out the ones with nothing to show.
+        let listed = Set(SettingsCategory.allCases.flatMap(\.pages))
+        return SettingsPage.allCases.filter { listed.contains($0) && $0.matches(searchText) }
     }
 
     private func settingsPageLink(_ page: SettingsPage) -> some View {
         NavigationLink(value: page) {
             VStack(alignment: .leading, spacing: 3) {
                 Text(page.title)
+                    #if os(tvOS)
+                    .font(TVConsoleTheme.display(21))
+                    #else
                     .font(.body.weight(.medium))
+                    #endif
                 Text(page.summary)
+                    #if os(tvOS)
+                    .font(TVConsoleTheme.display(16, weight: 600))
+                    .foregroundStyle(TVConsoleTheme.textMuted)
+                    #else
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+                    #endif
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(.vertical, 4)
@@ -416,7 +524,7 @@ struct SettingsView: View {
         case .touchController:
             inputTouchControllerSection
         case .controller:
-            #if os(iOS)
+            #if os(iOS) || os(tvOS)
             inputControllerSection
             #endif
         case .appearance:
@@ -614,6 +722,8 @@ struct SettingsView: View {
                             }
                             .buttonStyle(.bordered)
                         } else if connector.supported {
+                            // Linking a store happens on a web page, which a TV cannot open.
+                            #if !os(tvOS)
                             Button("Connect") {
                                 Task {
                                     await store.connectAccountConnector(connector) { url in
@@ -622,6 +732,7 @@ struct SettingsView: View {
                                 }
                             }
                             .buttonStyle(.borderedProminent)
+                            #endif
                         }
                     }
                     .padding(.vertical, 3)
@@ -635,9 +746,12 @@ struct SettingsView: View {
             }
             .disabled(store.loadingAccountConnectors)
 
-            Link(destination: store.accountHelpURL) {
-                Label("Account Help", systemImage: "questionmark.circle")
-            }
+            #if os(tvOS)
+            Text("To link a store, use GeForce NOW on another device, then refresh here.")
+                .font(.footnote).foregroundStyle(.secondary)
+            #endif
+
+            SettingsWebLink(title: "Account Help", systemImage: "questionmark.circle", url: store.accountHelpURL)
         }
     }
 
@@ -696,6 +810,10 @@ struct SettingsView: View {
 
     private var streamVideoSection: some View {
         Section {
+            #if os(tvOS)
+            TVDisplayModeSetting()
+            #endif
+
             Picker("Codec", selection: codecSelectionBinding) {
                 ForEach(codecValues, id: \.self) { Text($0).tag($0) }
             }
@@ -725,35 +843,42 @@ struct SettingsView: View {
                     .foregroundStyle(.secondary)
             }
 
-            Toggle("Metal 4 Rendering", isOn: $store.settings.metal4Enabled)
-            Text("Opt in to Metal 4 on supported devices running iOS 26 or later. Off uses compatible Metal rendering; HDR and MetalFX remain available.")
-                .font(.footnote).foregroundStyle(.secondary)
-
-            Toggle("MetalFX Upscaling", isOn: $store.settings.metalFXUpscalingEnabled)
-            if store.settings.metalFXUpscalingEnabled {
-                Picker("MetalFX Quality", selection: metalFXQualityBinding) {
-                    ForEach(MetalFXQualityPreset.allCases) { preset in
-                        Text(metalFXPresetLabel(preset)).tag(preset)
-                            .disabled(preset != .manual && metalFXChoice(preset) == nil)
-                    }
-                }
-                Text(metalFXResolutionSummary)
+            if streamVideoEffectsAvailable {
+                Toggle("Metal 4 Rendering", isOn: $store.settings.metal4Enabled)
+                Text("Opt in to Metal 4 on supported devices running iOS 26 or later. Off uses compatible Metal rendering; HDR and MetalFX remain available.")
                     .font(.footnote).foregroundStyle(.secondary)
-            }
-            Text("Quality preserves more detail; Balanced and Performance request smaller streams to reduce decode work. Presets select the nearest eligible resolution available on your plan. Resolution changes apply to a fresh session. Manual keeps your selected resolution. HDR, codec and FPS stay unchanged.")
-                .font(.footnote).foregroundStyle(.secondary)
-            Toggle("Stream Sharpening", isOn: $store.settings.streamSharpeningEnabled)
 
-            if store.settings.streamSharpeningEnabled {
-                VStack(alignment: .leading, spacing: 8) {
-                    LabeledContent(
-                        "Sharpness",
-                        value: "\(Int((store.settings.streamSharpeningAmount * 100).rounded()))%"
-                    )
-                    .monospacedDigit()
-                    Slider(value: $store.settings.streamSharpeningAmount, in: 0...1, step: 0.05)
-                        .accessibilityLabel("Sharpness amount")
-                        .accessibilityValue("\(Int((store.settings.streamSharpeningAmount * 100).rounded())) percent")
+                Toggle("MetalFX Upscaling", isOn: $store.settings.metalFXUpscalingEnabled)
+                if store.settings.metalFXUpscalingEnabled {
+                    Picker("MetalFX Quality", selection: metalFXQualityBinding) {
+                        ForEach(MetalFXQualityPreset.allCases) { preset in
+                            Text(metalFXPresetLabel(preset)).tag(preset)
+                                .disabled(preset != .manual && metalFXChoice(preset) == nil)
+                        }
+                    }
+                    Text(metalFXResolutionSummary)
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Text("Quality preserves more detail; Balanced and Performance request smaller streams to reduce decode work. Presets select the nearest eligible resolution available on your plan. Resolution changes apply to a fresh session. Manual keeps your selected resolution. HDR, codec and FPS stay unchanged.")
+                    .font(.footnote).foregroundStyle(.secondary)
+                Toggle("Stream Sharpening", isOn: $store.settings.streamSharpeningEnabled)
+
+                if store.settings.streamSharpeningEnabled {
+                    #if os(tvOS)
+                    TVSteppedPicker(title: "Sharpness", value: $store.settings.streamSharpeningAmount, range: 0...1,
+                                    step: 0.05, format: { "\(Int(($0 * 100).rounded()))%" })
+                    #else
+                    VStack(alignment: .leading, spacing: 8) {
+                        LabeledContent(
+                            "Sharpness",
+                            value: "\(Int((store.settings.streamSharpeningAmount * 100).rounded()))%"
+                        )
+                        .monospacedDigit()
+                        Slider(value: $store.settings.streamSharpeningAmount, in: 0...1, step: 0.05)
+                            .accessibilityLabel("Sharpness amount")
+                            .accessibilityValue("\(Int((store.settings.streamSharpeningAmount * 100).rounded())) percent")
+                    }
+                    #endif
                 }
             }
 
@@ -789,6 +914,8 @@ struct SettingsView: View {
 
             Toggle("Skip Server Selector", isOn: $store.settings.hideServerSelector)
 
+            // tvOS has no other receiver, so there is nothing to choose.
+            #if !os(tvOS)
             if #available(iOS 17.0, *) {
                 Toggle("Native NVST Receiver (Experimental)", isOn: $store.settings.experimentalNativeNVSTEnabled)
                 if store.settings.experimentalNativeNVSTEnabled {
@@ -796,6 +923,7 @@ struct SettingsView: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
+            #endif
 
             Toggle("Session Proxy", isOn: Binding(
                 get: { store.settings.sessionProxyEnabled },
@@ -857,7 +985,11 @@ struct SettingsView: View {
         } header: {
             Text("Audio")
         } footer: {
+            #if os(tvOS)
+            Text("Sets the audio preference for new sessions.")
+            #else
             Text("Sets the audio preference for new sessions. You can also mute or unmute the current game from stream controls.")
+            #endif
         }
     }
 
@@ -875,15 +1007,22 @@ struct SettingsView: View {
                 }
             }
 
+            // tvOS has neither a clipboard nor the stream keyboard.
+            #if !os(tvOS)
             Toggle("Paste Into Games", isOn: $store.settings.clipboardPasteEnabled)
             Toggle("Confirm Before Clearing Game Text", isOn: Binding(
                 get: { !store.settings.streamKeyboardClearConfirmationDisabled },
                 set: { store.settings.streamKeyboardClearConfirmationDisabled = !$0 }
             ))
+            #endif
         } header: {
             Text("Keyboard")
         } footer: {
+            #if os(tvOS)
+            Text("These defaults apply to new sessions. The keyboard layout has to match the one the game expects, not the one on your keyboard.")
+            #else
             Text("These defaults apply to new sessions. Paste sends your clipboard to the game as typed text. The keyboard layout has to match the one the game expects, not the one on your device. Clear in the stream keyboard selects all text in the focused game field and deletes it.")
+            #endif
         }
     }
 
@@ -926,7 +1065,11 @@ struct SettingsView: View {
         } header: {
             Text("Pointer")
         } footer: {
+            #if os(tvOS)
+            Text("Controller mouse mode maps the left stick to the cursor, the right stick to scrolling, A to click and B to right-click.")
+            #else
             Text("Controller mouse mode maps the left stick to the cursor, the right stick to scrolling, A to click and B to right-click. You can also switch it on for a single session from the stream controls.")
+            #endif
         }
     }
 
@@ -1090,13 +1233,15 @@ struct SettingsView: View {
         }
     }
 
-    #if os(iOS)
+    #if os(iOS) || os(tvOS)
     private var inputControllerSection: some View {
         Group {
+            #if os(iOS)
             Section {
                 Toggle("Send Controller Input to Game", isOn: $store.settings.streamerPreferences.physicalControllerPassthrough)
                 NavigationLink {
                     NativeStreamControllerShortcutsView(settings: $store.settings)
+                        .hidingTabBarWhenPushed()
                 } label: {
                     Label("Controller Shortcuts", systemImage: "gamecontroller")
                 }
@@ -1105,17 +1250,26 @@ struct SettingsView: View {
             } footer: {
                 Text("Controllers connect automatically. These defaults apply to new sessions. You can also change controller input from stream controls during a game.")
             }
+            #endif
 
             Section {
                 settingsSlider("Vibration Strength", value: $store.settings.controllerRumbleStrength,
                     range: NativeStreamControllerRumbleGain.range, step: 0.64, format: NativeStreamControllerRumbleGain.label)
+                #if os(iOS)
                 Toggle("Phone Vibration", isOn: $store.settings.phoneRumbleFallback)
+                #endif
             } header: {
                 Text("Vibration")
             } footer: {
+                #if os(iOS)
                 Text("Set strength to 0% to turn vibration off. Phone vibration is used when the controller has no vibration support.")
+                #else
+                Text("Set strength to 0% to turn vibration off.")
+                #endif
+            }
             }
 
+            #if os(iOS)
             if store.settings.controllerTouchPromptDismissed {
                 Section {
                     Button("Show Touch Controller Prompt Again") {
@@ -1125,11 +1279,15 @@ struct SettingsView: View {
                     Text("Ask about on-screen controls in a new session when a physical controller is connected and touch controls are enabled.")
                 }
             }
+            #endif
         }
     }
     #endif
 
+    @ViewBuilder
     private var inputTutorialSection: some View {
+        // The tutorial introduces the iOS stream controls; the tvOS stream screen has none.
+        #if !os(tvOS)
         Section {
             Button {
                 store.setStreamTutorialCompleted(false)
@@ -1138,6 +1296,7 @@ struct SettingsView: View {
             }
             .disabled(!store.settings.streamTutorialCompleted)
         }
+        #endif
     }
 
     private var scrollSensitivityLabel: String {
@@ -1168,6 +1327,9 @@ struct SettingsView: View {
         step: Double,
         format: @escaping (Double) -> String
     ) -> some View {
+        #if os(tvOS)
+        TVSteppedPicker(title: title, value: value, range: range, step: step, format: format)
+        #else
         VStack(alignment: .leading, spacing: 6) {
             ViewThatFits(in: .horizontal) {
                 HStack {
@@ -1192,6 +1354,7 @@ struct SettingsView: View {
                 .accessibilityLabel(title)
                 .accessibilityValue(format(value.wrappedValue))
         }
+        #endif
     }
 
     // MARK: Interface
@@ -1295,11 +1458,14 @@ struct SettingsView: View {
             Toggle("Show Stats While Streaming", isOn: $store.settings.showStatsOverlay)
 
             if store.settings.showStatsOverlay {
+                // The tvOS HUD is a single line; it has no detailed style.
+                #if !os(tvOS)
                 Picker("Style", selection: $store.settings.streamerPreferences.statsStyle) {
                     ForEach(StreamStatsStyle.allCases) { style in
                         Text(style.label).tag(style)
                     }
                 }
+                #endif
                 Picker("Position", selection: $store.settings.streamerPreferences.statsPosition) {
                     ForEach(StreamStatsPosition.allCases) { position in
                         Text(position.label).tag(position)
@@ -1308,14 +1474,19 @@ struct SettingsView: View {
                 NavigationLink {
                     StatsMetricsPicker(metrics: $store.settings.streamStatsMetrics,
                                        showClock: $store.settings.streamerPreferences.showStatsClock)
+                        .hidingTabBarWhenPushed()
                 } label: {
-                    LabeledContent("Metrics", value: "\(store.settings.streamStatsMetrics.enabledCount + (store.settings.streamerPreferences.showStatsClock ? 1 : 0)) shown")
+                    LabeledContent("Metrics", value: "\(store.settings.streamStatsMetrics.shownCount + (store.settings.streamerPreferences.showStatsClock ? 1 : 0)) shown")
                 }
             }
         } header: {
             Text("Stats HUD")
         } footer: {
+            #if os(tvOS)
+            Text("Choose which numbers appear over the game. The stream menu can also show or hide them while you play.")
+            #else
             Text("Choose which numbers appear over the game. Immersive mode in Stream Controls can hide the HUD even when statistics are enabled.")
+            #endif
         }
     }
 
@@ -1332,7 +1503,10 @@ struct SettingsView: View {
 
     private var interfaceSoundSessionSection: some View {
         Section {
+            // The counter is drawn by the iOS stream controls.
+            #if !os(tvOS)
             Toggle("Session Counter", isOn: $store.settings.sessionCounterEnabled)
+            #endif
             Toggle("Session Report", isOn: $store.settings.showSessionReportAfterStream)
             Toggle("Chime When Ready", isOn: $store.settings.queueReadySound)
             #if !os(tvOS)
@@ -1341,7 +1515,11 @@ struct SettingsView: View {
         } header: {
             Text("Sessions")
         } footer: {
+            #if os(tvOS)
+            Text("The session report appears after a stream ends and scores how the connection held up. The chime plays once when a rig frees up, so you can look away while you wait for a long queue.")
+            #else
             Text("The session report appears after a stream ends and scores how the connection held up. The chime plays once when a rig frees up, so you can put the phone down while you wait for a long queue.")
+            #endif
         }
     }
 
@@ -1354,6 +1532,7 @@ struct SettingsView: View {
             Label("No Usage Analytics", systemImage: "checkmark.shield")
             NavigationLink {
                 OpenNOWPrivacyPolicyView()
+                    .hidingTabBarWhenPushed()
             } label: {
                 Label("Privacy Policy", systemImage: "hand.raised")
             }
@@ -1390,11 +1569,13 @@ struct SettingsView: View {
         Section {
             NavigationLink {
                 CodecDiagnosticsView()
+                    .hidingTabBarWhenPushed()
             } label: {
                 Label("Decoders", systemImage: "cpu")
             }
             NavigationLink {
                 DebugLogView()
+                    .hidingTabBarWhenPushed()
             } label: {
                 Label("Network Log", systemImage: "list.bullet.rectangle")
             }
@@ -1475,7 +1656,10 @@ struct SettingsView: View {
         } header: {
             Text("Codec Diagnostics")
         } footer: {
+            // Logs can be neither uploaded nor shared from a TV.
+            #if !os(tvOS)
             Text("Includes detailed redacted API requests and responses, launch, queue, stream, codec, device, settings, telemetry, and recent OpenNOW logs. Uploads use an unlisted public paste that expires after 7 days. Credentials, tokens, cookies, OAuth values, email addresses, local user paths, identifiers, IP addresses, and long opaque values are removed or fingerprinted before upload. Only the compact summary and paste link are copied.")
+            #endif
         }
     }
 
@@ -1538,18 +1722,15 @@ struct SettingsView: View {
                 Label("Report a Problem", systemImage: "ladybug")
             }
 
-            LabeledContent("OpenNOW iOS", value: "Version \(appVersion)")
+            LabeledContent("OpenNOW \(OpenNOWPlatform.displayName)", value: "Version \(appVersion)")
             LabeledContent("Build", value: buildNumber)
             LabeledContent("Platform", value: OpenNOWPlatform.displayName)
-            Link(destination: URL(string: "https://github.com/OpenCloudGaming/OpenNOW")!) {
-                Label("OpenNOW Repository", systemImage: "chevron.left.forwardslash.chevron.right")
-            }
-            Link(destination: URL(string: "https://github.com/Kief5555")!) {
-                Label("Kiefer", systemImage: "person.crop.circle")
-            }
-            Link(destination: URL(string: "https://github.com/zortos293")!) {
-                Label("Zortos", systemImage: "person.crop.circle")
-            }
+            SettingsWebLink(title: "OpenNOW Repository", systemImage: "chevron.left.forwardslash.chevron.right",
+                            url: URL(string: "https://github.com/OpenCloudGaming/OpenNOW")!)
+            SettingsWebLink(title: "Kiefer", systemImage: "person.crop.circle",
+                            url: URL(string: "https://github.com/Kief5555")!)
+            SettingsWebLink(title: "Zortos", systemImage: "person.crop.circle",
+                            url: URL(string: "https://github.com/zortos293")!)
         }
     }
 
@@ -1767,7 +1948,10 @@ struct SettingsView: View {
             subscription: store.subscription,
             fallbackMembershipTier: store.user?.membershipTier
         )
-        #if canImport(UIKit)
+        #if os(tvOS)
+        // An Apple TV idles in SDR and switches mode per video, so its headroom reads 1.
+        let displayAllowsHDR = AVPlayer.eligibleForHDRPlayback
+        #elseif canImport(UIKit)
         let displayAllowsHDR = UIScreen.main.potentialEDRHeadroom > 1
         #else
         let displayAllowsHDR = false
@@ -1848,8 +2032,18 @@ struct SettingsView: View {
         return "\(preset.label) · \(choice.label)"
     }
 
+    /// The tvOS stream draws through `AVSampleBufferDisplayLayer`, not the Metal renderer: there is
+    /// no Metal 4 path, MetalFX or sharpening, and a MetalFX preset would only shrink the stream.
+    private var streamVideoEffectsAvailable: Bool {
+        #if os(tvOS)
+        false
+        #else
+        true
+        #endif
+    }
+
     private func applyMetalFXQualityPreset() {
-        guard store.settings.metalFXUpscalingEnabled,
+        guard streamVideoEffectsAvailable, store.settings.metalFXUpscalingEnabled,
               store.settings.metalFXQualityPreset != .manual else { return }
         guard let choice = metalFXChoice(store.settings.metalFXQualityPreset) else {
             store.settings.metalFXQualityPreset = .manual
@@ -1973,7 +2167,7 @@ struct SettingsView: View {
     ) -> String {
         var label = choice.label
         if !available, let plan = choice.requiredPlan.label { label += " · \(plan)" }
-        if store.settings.metalFXUpscalingEnabled {
+        if streamVideoEffectsAvailable && store.settings.metalFXUpscalingEnabled {
             let source = StreamSettingsResolver.pixelSize(choice.value)
             let target = NativeStreamVideoEffectsPolicy.presentationSize(source: source,
                 display: metalFXDisplaySize, stretch: store.settings.streamerPreferences.stretchStreamToFill)
@@ -2043,7 +2237,9 @@ private struct StatsMetricsPicker: View {
         Form {
             Section("Connection") {
                 metricToggle("Frame Rate", \.fps)
+                #if !os(tvOS)
                 metricToggle("Displayed FPS", \.displayedFPS)
+                #endif
                 metricToggle("Ping", \.ping)
                 metricToggle("Decode Time", \.latency)
                 metricToggle("Bitrate", \.bitrate)
@@ -2052,13 +2248,18 @@ private struct StatsMetricsPicker: View {
 
             Section {
                 metricToggle("Resolution", \.resolution)
+                // The tvOS HUD has no reading for the renderer, the battery or the network type.
+                #if !os(tvOS)
                 metricToggle("Renderer status", \.renderer)
+                #endif
                 metricToggle("GPU", \.gpu)
                 metricToggle("Codec", \.codec)
                 metricToggle("Server", \.location)
+                #if !os(tvOS)
                 metricToggle("Battery", \.battery)
                 metricToggle("Session battery", \.sessionBattery)
                 metricToggle("Network Type", \.connection)
+                #endif
                 Toggle("Clock", isOn: $showClock)
             } header: {
                 Text("Session")
@@ -2071,16 +2272,57 @@ private struct StatsMetricsPicker: View {
     }
 
     private func metricToggle(_ title: String, _ keyPath: WritableKeyPath<StreamStatsMetrics, Bool>) -> some View {
-        let isLastEnabled = metrics[keyPath: keyPath] && metrics.enabledCount == 1
+        let isLastEnabled = metrics[keyPath: keyPath] && metrics.shownCount == 1
         return Toggle(title, isOn: Binding(
             get: { metrics[keyPath: keyPath] },
             set: { newValue in
                 // Never let the HUD empty out — there is no way to recover from inside a stream.
-                guard newValue || metrics.enabledCount > 1 else { return }
+                guard newValue || metrics.shownCount > 1 else { return }
                 metrics[keyPath: keyPath] = newValue
             }
         ))
         .disabled(isLastEnabled)
+    }
+}
+
+private extension StreamStatsMetrics {
+    /// The enabled metrics this platform's HUD can show.
+    var shownCount: Int {
+        #if os(tvOS)
+        tvEnabledCount
+        #else
+        enabledCount
+        #endif
+    }
+}
+
+/// A link to a web page. tvOS has no browser, so the address is shown instead, to be opened on
+/// another device.
+private struct SettingsWebLink: View {
+    let title: String
+    let systemImage: String?
+    let url: URL
+
+    var body: some View {
+        #if os(tvOS)
+        LabeledContent {
+            Text((url.host ?? "") + url.path)
+        } label: {
+            label
+        }
+        .readableRowOnTV()
+        #else
+        Link(destination: url) { label }
+        #endif
+    }
+
+    @ViewBuilder
+    private var label: some View {
+        if let systemImage {
+            Label(title, systemImage: systemImage)
+        } else {
+            Text(title)
+        }
     }
 }
 
@@ -2089,28 +2331,36 @@ private struct OpenNOWPrivacyPolicyView: View {
         List {
             Section("Overview") {
                 Text("OpenNOW is a client for a GeForce NOW account you provide. OpenNOW does not sell personal information, serve its own advertising, or run usage analytics.")
+                    .readableRowOnTV()
             }
 
             Section("Information on This Device") {
                 Text("Account authorization tokens are stored in Apple Keychain. App preferences, a selected catalog wallpaper, a random device identifier, catalog cache, favorites, launcher choices, and resumable-session state are stored locally so the app can work reliably across launches.")
+                    .readableRowOnTV()
             }
 
             Section("Services You Contact") {
                 Text("When you sign in, browse games, link stores, or start a stream, the app communicates directly with NVIDIA and the selected GeForce NOW alliance provider. Those services receive the account, device, network, and session information needed to provide their service under their own privacy terms.")
+                    .readableRowOnTV()
                 Text("Free-tier server selection can contact PrintedWaste queue endpoints. OpenNOW does not send OAuth passwords to PrintedWaste.")
+                    .readableRowOnTV()
                 Text("If you explicitly choose Upload Redacted Logs, OpenNOW sends a strictly sanitized diagnostic artifact to paste.rtech.support. The unlisted paste expires after seven days. The app does not upload diagnostics automatically.")
+                    .readableRowOnTV()
             }
 
             Section("Apple Features") {
                 Text("If enabled, queue status can be shown using local notifications and Live Activities. These features are processed by the app and Apple system services on your device.")
+                    .readableRowOnTV()
             }
 
             Section("Your Choices") {
                 Text("You can sign out one or all accounts, clear cached images and catalog data, reset settings, or reset the entire app from Settings. Resetting removes locally stored OpenNOW data and Keychain credentials.")
+                    .readableRowOnTV()
             }
 
             Section("Contact") {
-                Link("Open an OpenNOW privacy issue", destination: URL(string: "https://github.com/OpenCloudGaming/OpenNOW/issues")!)
+                SettingsWebLink(title: "Open an OpenNOW privacy issue", systemImage: nil,
+                                url: URL(string: "https://github.com/OpenCloudGaming/OpenNOW/issues")!)
             }
         }
         .navigationTitle("Privacy Policy")

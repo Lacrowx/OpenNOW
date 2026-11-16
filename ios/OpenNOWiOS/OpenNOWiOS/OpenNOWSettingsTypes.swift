@@ -33,6 +33,9 @@ enum SettingsPage: String, CaseIterable, Hashable, Identifiable {
     }
 
     var summary: String {
+        #if os(tvOS)
+        if let summary = tvSummary { return summary }
+        #endif
         switch self {
         case .privacy: return String(localized: "Local data and privacy policy")
         case .appData: return String(localized: "Welcome tour, tutorials, cache, and reset")
@@ -53,6 +56,23 @@ enum SettingsPage: String, CaseIterable, Hashable, Identifiable {
         case .diagnostics: return String(localized: "Decoders, network logs, and problem reports")
         }
     }
+
+    #if os(tvOS)
+    /// For the pages that list fewer settings on a TV than on iOS.
+    private var tvSummary: String? {
+        switch self {
+        case .appData: return String(localized: "Welcome tour, cache, and reset")
+        case .video: return String(localized: "Display mode, codec, color, and HDR")
+        case .connection: return String(localized: "Region, server selector, and proxy")
+        case .keyboard: return String(localized: "Game sound, layout, and language")
+        case .controller: return String(localized: "Vibration")
+        case .catalog: return String(localized: "Launch page and cards")
+        case .stats: return String(localized: "HUD position, metrics, and clock")
+        case .sessions: return String(localized: "Report and ready chime")
+        default: return nil
+        }
+    }
+    #endif
 
     private var keywords: String {
         switch self {

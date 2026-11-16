@@ -76,6 +76,10 @@ final class StreamSessionHistoryStore: ObservableObject {
     private let key = "OpenNOW.iOS.streamSessionHistory.v1"
     private var lastPersistedAt = Date.distantPast
     static let maximumRecords = 100
+    #if DEBUG
+    /// Set by `installDebugSamples()`: the sample records must never reach `defaults`.
+    fileprivate var holdsSamples = false
+    #endif
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -107,8 +111,37 @@ final class StreamSessionHistoryStore: ObservableObject {
     }
 
     private func persist() {
+        #if DEBUG
+        guard !holdsSamples else { return }
+        #endif
         guard let data = try? JSONEncoder().encode(records) else { return }
         defaults.set(data, forKey: key)
         lastPersistedAt = Date()
     }
 }
+
+#if DEBUG
+extension StreamSessionHistoryStore {
+    /// Sample history for screenshots (`--opennow-shell-preview`); in memory only.
+    func installDebugSamples() {
+        func record(_ title: String, ago: TimeInterval, minutes: Double, resolution: String = "3840x2160",
+                    fps: Int = 60, codec: String = "H.265", hdr: Bool = true) -> StreamSessionRecord {
+            var record = StreamSessionRecord(
+                gameTitle: title, resolution: resolution, targetFPS: fps, codec: codec,
+                hdr: hdr, transport: "UDP", at: Date().addingTimeInterval(-ago))
+            record.updatedAt = record.startedAt.addingTimeInterval(minutes * 60)
+            return record
+        }
+        var finished = record("Cyberpunk 2077", ago: 86_400 * 2, minutes: 95)
+        finished.endedAt = finished.updatedAt
+        var interrupted = record("Baldur's Gate 3", ago: 86_400, minutes: 41, resolution: "2560x1440", hdr: false)
+        interrupted.endedAt = interrupted.updatedAt
+        interrupted.interrupted = true
+        var shortRun = record("Fortnite", ago: 86_400 * 4, minutes: 12, resolution: "1920x1080", fps: 120,
+                              codec: "H.264", hdr: false)
+        shortRun.endedAt = shortRun.updatedAt
+        holdsSamples = true
+        records = [record("Forza Horizon 5", ago: 25 * 60, minutes: 25), interrupted, finished, shortRun]
+    }
+}
+#endif
