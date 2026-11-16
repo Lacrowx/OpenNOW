@@ -1,0 +1,7 @@
+# Built by BuildScripts/build-native-protocol-libs-tvos.py
+Frameworks/
+# Generated from project.yml by XcodeGen (BuildScripts/build.sh and deploy.sh run it).
+OpenNOWtvOS.xcodeproj/
+# Your own signing team, bundle id and Apple TV; see Signing.xcconfig and BuildScripts/deploy.sh.
+Signing.local.xcconfig
+BuildScripts/deploy.local

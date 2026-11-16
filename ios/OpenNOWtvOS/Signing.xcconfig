@@ -1,0 +1,12 @@
+// Signing for the tvOS app and its tests. These defaults build for the simulator, and for a
+// device with CODE_SIGNING_ALLOWED=NO. To install on an Apple TV, put your own values in
+// Signing.local.xcconfig next to this file (it is not committed), for example:
+//
+//     DEVELOPMENT_TEAM = ABCDE12345
+//     OPENNOW_TVOS_BUNDLE_ID = com.example.opennow.tvos
+//
+// A free (personal) team needs a bundle id that no other team has registered.
+DEVELOPMENT_TEAM =
+OPENNOW_TVOS_BUNDLE_ID = com.opencloudgaming.opennow.tvos
+
+#include? "Signing.local.xcconfig"
