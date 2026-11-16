@@ -1,5 +1,8 @@
 <h1 align="center">OpenNOW</h1>
 
+> [!NOTE]
+> **This is a fork of [OpenCloudGaming/OpenNOW](https://github.com/OpenCloudGaming/OpenNOW) with an Apple TV port**, built on the official iOS client from the [`kief5555/ios`](https://github.com/OpenCloudGaming/OpenNOW/tree/kief5555/ios) branch. It is not an official OpenNOW release. See the [Apple TV README](ios/OpenNOWtvOS/README.md) for what works and how to build and install it. The aim is to contribute this work back to the official repository.
+
 **iOS native NVST, HDR and MetalFX:** [source and build instructions](ios/OpenNOWiOS/README.md) · [Metal 4 renderer and validation](ios/OpenNOWiOS/METAL4.md)
 
 **Apple TV, native NVST (experimental, sideload only):** [source and build instructions](ios/OpenNOWtvOS/README.md)
