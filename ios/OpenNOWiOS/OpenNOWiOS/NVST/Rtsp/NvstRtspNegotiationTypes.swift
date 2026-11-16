@@ -108,6 +108,8 @@ public struct NvstRtspSession: Sendable {
     public let controlRoundTripMilliseconds: @Sendable () async -> Double
     /// Keepalive ping/pong counters for the diagnostic log.
     public let controlKeepAliveSummary: @Sendable () async -> String
+    /// Which HID devices the seat's DESCRIBE said it accepts; nil when it stated no mask.
+    public var hidCapability: NvstHidPassthrough.SeatCapability? = nil
 }
 
 public struct NvstRtspNegotiationInput: Sendable {

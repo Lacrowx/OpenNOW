@@ -1111,6 +1111,11 @@ struct AppSettings: Codable, Equatable {
     var fingerMouseEnabled: Bool = true
     var phoneRumbleFallback: Bool = true
     var controllerRumbleStrength: Double = 1
+    /// Experimental: offer a DualSense to the host as a DualSense, so games can drive its
+    /// adaptive triggers, instead of as the DualShock 4 the official client presents.
+    var dualSensePassthrough: Bool = false
+    /// Experimental: how strongly a game's body rumble also plays on a DualSense's triggers, 0 for off.
+    var triggerRumbleStrength: Double = 0
     var controllerShortcuts = NativeStreamControllerShortcuts()
     var launchPage: AppLaunchPage = .store
     var posterSizeScale: Double = 1
@@ -1226,6 +1231,8 @@ struct AppSettings: Codable, Equatable {
         case fingerMouseEnabled
         case phoneRumbleFallback
         case controllerRumbleStrength
+        case dualSensePassthrough
+        case triggerRumbleStrength
         case controllerShortcuts
         case launchPage
         case posterSizeScale
@@ -1351,6 +1358,9 @@ struct AppSettings: Codable, Equatable {
         fingerMouseEnabled = try container.decodeIfPresent(Bool.self, forKey: .fingerMouseEnabled) ?? true
         phoneRumbleFallback = try container.decodeIfPresent(Bool.self, forKey: .phoneRumbleFallback) ?? true
         controllerRumbleStrength = try container.decodeIfPresent(Double.self, forKey: .controllerRumbleStrength) ?? 1
+        dualSensePassthrough = try container.decodeIfPresent(Bool.self, forKey: .dualSensePassthrough) ?? false
+        triggerRumbleStrength = NativeStreamTriggerRumbleStrength.normalize(
+            try container.decodeIfPresent(Double.self, forKey: .triggerRumbleStrength) ?? 0)
         controllerShortcuts = try container.decodeIfPresent(NativeStreamControllerShortcuts.self, forKey: .controllerShortcuts) ?? .init()
         launchPage = try container.decodeIfPresent(AppLaunchPage.self, forKey: .launchPage) ?? .store
         posterSizeScale = try container.decodeIfPresent(Double.self, forKey: .posterSizeScale) ?? 1

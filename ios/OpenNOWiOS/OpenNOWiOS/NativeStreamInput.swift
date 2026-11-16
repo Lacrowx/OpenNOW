@@ -13,6 +13,20 @@ import CoreHaptics
 import UIKit
 #endif
 
+/// How strongly body rumble is mirrored onto a DualSense's triggers: a plain scale on the game's
+/// motor values, 0 for off and up to twice for games that rumble faintly.
+enum NativeStreamTriggerRumbleStrength {
+    static let range: ClosedRange<Double> = 0...2
+    static let step = 0.25
+    static func normalize(_ strength: Double) -> Double {
+        strength.isFinite ? min(max(strength, range.lowerBound), range.upperBound) : 0
+    }
+    static func label(_ strength: Double) -> String {
+        let strength = normalize(strength)
+        return strength > 0 ? String(format: "%.0f%%", strength * 100) : "Off"
+    }
+}
+
 enum NativeStreamControllerRumbleGain {
     static let range: ClosedRange<Double> = 0...64
     static func normalize(_ multiplier: Double) -> Double {
@@ -349,6 +363,33 @@ final class NativeStreamInputEncoder {
             : wrapGamepadReliable(Data(bytes))
     }
 
+    /// A pad the host takes as a synthesized DualShock 4 instead of an XInput pad. The NVST codec
+    /// owns the report and the removal event; this only adds the channel framing.
+    func encodeDualShock4State(_ state: NvstHidPassthrough.SynthesizedDualShock4.State, gamepadIndex: Int) -> Data {
+        wrapGamepadReliable(NvstHidPassthrough.SynthesizedDualShock4.report(
+            state, gamepadIndex: gamepadIndex, timestampMicroseconds: Self.timestampUs()).event)
+    }
+
+    func encodeDualShock4Removal(gamepadIndex: Int) -> Data {
+        wrapGamepadReliable(NvstHidPassthrough.SynthesizedDualShock4.changeEvent(gamepadIndex: gamepadIndex, connected: false).event)
+    }
+
+    /// A DualSense the host is asked to take as a DualSense. The pad is named by its request id
+    /// throughout; the transport swaps in the device id the host answers with.
+    func encodeDualSenseAnnouncement(gamepadIndex: Int) -> Data {
+        wrapGamepadReliable(NvstHidPassthrough.DualSense.changeEvent(gamepadIndex: gamepadIndex).event)
+    }
+
+    func encodeDualSenseRemoval(gamepadIndex: Int) -> Data {
+        wrapGamepadReliable(NvstHidPassthrough.DualSense.removalEvent(
+            deviceId: NvstHidPassthrough.DualSense.requestId(gamepadIndex: gamepadIndex)).event)
+    }
+
+    func encodeDualSenseState(_ state: NvstHidPassthrough.DualSense.State, gamepadIndex: Int, sequence: UInt8) -> Data {
+        wrapGamepadReliable(NvstHidPassthrough.DualSense.report(
+            state, gamepadIndex: gamepadIndex, sequence: sequence, timestampMicroseconds: Self.timestampUs()).event)
+    }
+
     private func encodeKey(type: UInt32, mapping: NativeStreamKeyboardMapping, modifiers: UInt16) -> Data {
         var bytes = [UInt8](repeating: 0, count: 18)
         Self.writeUInt32LE(type, to: &bytes, at: 0)
@@ -668,6 +709,30 @@ private final class NativeStreamHapticPlayback {
 }
 #endif
 
+extension GCDualSenseAdaptiveTrigger {
+    /// Plays a trigger effect read from a DualSense output report.
+    func apply(_ effect: NvstHidPassthrough.DualSense.TriggerEffect) {
+        // Game Controller takes the ten zones as a C array of floats.
+        func fill<Zones>(_ zones: inout Zones, with values: [Float]) {
+            withUnsafeMutableBytes(of: &zones) { target in values.withUnsafeBytes { target.copyMemory(from: $0) } }
+        }
+        switch effect {
+        case .off:
+            setModeOff()
+        case .feedback(let strengths):
+            var positional = GCDualSenseAdaptiveTrigger.PositionalResistiveStrengths()
+            fill(&positional.values, with: strengths)
+            setModeFeedback(resistiveStrengths: positional)
+        case .weapon(let start, let end, let strength):
+            setModeWeaponWithStartPosition(start, endPosition: end, resistiveStrength: strength)
+        case .vibration(let amplitudes, let frequency):
+            var positional = GCDualSenseAdaptiveTrigger.PositionalAmplitudes()
+            fill(&positional.values, with: amplitudes)
+            setModeVibration(amplitudes: positional, frequency: frequency)
+        }
+    }
+}
+
 final class NativeStreamInputBridge {
     weak var sink: NativeStreamInputSink?
     var onPhysicalControllerAvailabilityChanged: ((Bool) -> Void)?
@@ -689,6 +754,27 @@ final class NativeStreamInputBridge {
     private var controllersBySlot: [Int: GCController] = [:]
     private var controllerSlots: [ObjectIdentifier: Int] = [:]
     private var lastGamepadStates: [Int: NativeStreamGamepadState] = [:]
+    /// Whether the host takes a synthesized DualShock 4. A DualSense is then sent as one, so games
+    /// show PlayStation prompts; every other controller stays an XInput pad.
+    private var dualShock4HIDAvailable = false
+    private var lastDualShock4States: [Int: NvstHidPassthrough.SynthesizedDualShock4.State] = [:]
+    /// How far the offer of a DualSense to the host as a DualSense has got. A pad the host refused
+    /// or never answered for stays refused for the session and takes the routes above instead.
+    private enum DualSenseRoute { case requested, active, refused }
+    /// The user's setting: offer a DualSense as itself so games can drive its adaptive triggers.
+    private var dualSensePassthroughEnabled = false
+    private var dualSenseRoutes: [Int: DualSenseRoute] = [:]
+    private var lastDualSenseStates: [Int: NvstHidPassthrough.DualSense.State] = [:]
+    private var dualSenseSequence: UInt8 = 0
+    /// The user's setting: how strongly a game's body rumble also plays on a DualSense's
+    /// triggers, 0 for not at all. It is separate from the strength of the handle motors.
+    private var triggerRumbleStrength: Float = 0
+    /// The player's own feel for each trigger, which a DualSense has whenever nothing else is
+    /// playing on it. Only for pads the host knows as something else: a pad it took as a DualSense
+    /// has its triggers shaped by the game.
+    private var fixedTriggerEffects: (left: NvstHidPassthrough.DualSense.TriggerEffect, right: NvstHidPassthrough.DualSense.TriggerEffect) = (.off, .off)
+    /// The effect each trigger was last given, so a game repeating its report does not repeat the call.
+    private var dualSenseTriggerEffects: [Int: (left: NvstHidPassthrough.DualSense.TriggerEffect?, right: NvstHidPassthrough.DualSense.TriggerEffect?)] = [:]
     private var gamepadKeepaliveTimer: Timer?
     private var heartbeatTimer: Timer?
     private var mouseEmulationTimer: Timer?
@@ -785,6 +871,115 @@ final class NativeStreamInputBridge {
         physicalControllerPassthroughEnabled = enabled
         attachControllers()
         advertiseHaptics(force: true)
+    }
+
+    func setDualShock4HIDAvailable(_ available: Bool) {
+        guard dualShock4HIDAvailable != available else { return }
+        dualShock4HIDAvailable = available
+        sendCurrentGamepads(force: true)
+    }
+
+    private func usesDualShock4HID(slot: Int) -> Bool {
+        dualShock4HIDAvailable && !usesDualSenseHID(slot: slot) && controllersBySlot[slot]?.extendedGamepad is GCDualSenseGamepad
+    }
+
+    /// Starts a session's DualSense offers afresh: every DualSense is offered to the host again.
+    func setDualSensePassthrough(_ enabled: Bool) {
+        releaseDualSenseRoutes(notifyingHost: true)
+        dualSensePassthroughEnabled = enabled
+        sendCurrentGamepads(force: true)
+    }
+
+    private func usesDualSenseHID(slot: Int) -> Bool {
+        dualSensePassthroughEnabled && dualSenseRoutes[slot] != .refused
+            && controllersBySlot[slot]?.extendedGamepad is GCDualSenseGamepad
+    }
+
+    /// The host's answer to a DualSense offer: taken, or refused (an unanswered offer counts as refused).
+    func dualSenseRouteAnswered(controllerId: Int, accepted: Bool) {
+        guard dualSenseRoutes[controllerId] == .requested else { return }
+        dualSenseRoutes[controllerId] = accepted ? .active : .refused
+        sink?.logInputEvent("controller slot \(controllerId) \(accepted ? "taken by the host as a DualSense" : "refused as a DualSense")")
+        sendCurrentGamepads(force: true)
+    }
+
+    /// What the game wrote to a pad the host took as a DualSense: rumble for the motors and an
+    /// effect for each adaptive trigger.
+    func applyDualSenseOutput(controllerId: Int, output: NvstHidPassthrough.DualSense.Output) {
+        guard dualSenseRoutes[controllerId] == .active else { return }
+        if let rumble = output.rumble {
+            applyRumble(controllerId: controllerId, weakMagnitude: Int(rumble.weak) << 8, strongMagnitude: Int(rumble.strong) << 8)
+        }
+        guard let pad = controllersBySlot[controllerId]?.extendedGamepad as? GCDualSenseGamepad else { return }
+        playTriggerEffects(left: output.leftTrigger, right: output.rightTrigger, on: pad, slot: controllerId)
+    }
+
+    /// Gives each trigger its effect unless it already has it; nil leaves a trigger as it is.
+    private func playTriggerEffects(left: NvstHidPassthrough.DualSense.TriggerEffect?, right: NvstHidPassthrough.DualSense.TriggerEffect?,
+                                    on pad: GCDualSenseGamepad, slot: Int) {
+        var applied = dualSenseTriggerEffects[slot] ?? (left: nil, right: nil)
+        if let left, applied.left != left {
+            applied.left = left
+            pad.leftTrigger.apply(left)
+        }
+        if let right, applied.right != right {
+            applied.right = right
+            pad.rightTrigger.apply(right)
+        }
+        dualSenseTriggerEffects[slot] = applied
+    }
+
+    func setTriggerRumbleStrength(_ strength: Double) {
+        triggerRumbleStrength = Float(NativeStreamTriggerRumbleStrength.normalize(strength))
+    }
+
+    func setFixedTriggerEffects(left: NvstHidPassthrough.DualSense.TriggerEffect, right: NvstHidPassthrough.DualSense.TriggerEffect) {
+        fixedTriggerEffects = (left, right)
+        applyFixedTriggerEffects()
+    }
+
+    private func applyFixedTriggerEffects() {
+        for (slot, controller) in controllersBySlot where dualSenseRoutes[slot] != .active {
+            guard let pad = controller.extendedGamepad as? GCDualSenseGamepad else { continue }
+            playTriggerEffects(left: fixedTriggerEffects.left, right: fixedTriggerEffects.right, on: pad, slot: slot)
+        }
+    }
+
+    /// On a host that only knows the pad as a DualShock 4 the game cannot reach the triggers, so
+    /// the user may have its body rumble played on them as well. The motor values are taken as
+    /// the game sent them and scaled by the triggers' own strength: the handle motors' strength
+    /// is a boost of up to 64 times and would turn the faintest rumble into a full-strength trigger.
+    private func mirrorRumbleOnTriggers(controllerId: Int, weakMagnitude: Int, strongMagnitude: Int) {
+        guard triggerRumbleStrength > 0, physicalControllerPassthroughEnabled, dualSenseRoutes[controllerId] != .active,
+              let pad = controllersBySlot[controllerId]?.extendedGamepad as? GCDualSenseGamepad else { return }
+        let rumble = NvstHidPassthrough.DualSense.TriggerEffect.mirroringRumble(
+            weak: Float(weakMagnitude) / 65_535, strong: Float(strongMagnitude) / 65_535, strength: triggerRumbleStrength)
+        // A trigger does one thing at a time: the rumble while there is one, the fixed feel otherwise.
+        let left = rumble == .off ? fixedTriggerEffects.left : rumble
+        if dualSenseTriggerEffects[controllerId]?.left != left {
+            sink?.logInputEvent("controller slot \(controllerId) rumble weak=\(weakMagnitude) strong=\(strongMagnitude) on triggers as \(rumble)")
+        }
+        playTriggerEffects(left: left, right: rumble == .off ? fixedTriggerEffects.right : rumble, on: pad, slot: controllerId)
+    }
+
+    /// Frees a pad's triggers from whatever effect the game left on them.
+    private func resetTriggerEffects(slot: Int) {
+        guard dualSenseTriggerEffects.removeValue(forKey: slot) != nil,
+              let pad = controllersBySlot[slot]?.extendedGamepad as? GCDualSenseGamepad else { return }
+        pad.leftTrigger.setModeOff()
+        pad.rightTrigger.setModeOff()
+    }
+
+    /// Ends one pad's time as a DualSense on the host.
+    private func releaseDualSenseRoute(slot: Int, notifyingHost: Bool) {
+        resetTriggerEffects(slot: slot)
+        lastDualSenseStates.removeValue(forKey: slot)
+        guard let route = dualSenseRoutes.removeValue(forKey: slot), route != .refused, notifyingHost else { return }
+        sink?.sendReliableInput(encoder.encodeDualSenseRemoval(gamepadIndex: slot))
+    }
+
+    private func releaseDualSenseRoutes(notifyingHost: Bool) {
+        for slot in Array(dualSenseRoutes.keys) { releaseDualSenseRoute(slot: slot, notifyingHost: notifyingHost) }
     }
 
     func setPhoneRumbleFallback(_ enabled: Bool) {
@@ -912,6 +1107,9 @@ final class NativeStreamInputBridge {
         }
         keyboard = nil
         mice = []
+        // While the pads are still known: a trigger must not keep an effect after the stream.
+        releaseDualSenseRoutes(notifyingHost: false)
+        Array(dualSenseTriggerEffects.keys).forEach(resetTriggerEffects)
         controllersBySlot.removeAll(keepingCapacity: true)
         controllerSlots.removeAll(keepingCapacity: true)
         lastGamepadStates.removeAll(keepingCapacity: true)
@@ -1063,6 +1261,7 @@ final class NativeStreamInputBridge {
             "strongMagnitude": String(strongMagnitude), "passthrough": String(physicalControllerPassthroughEnabled),
             "matchedController": controllersBySlot[controllerId]?.vendorName ?? "none",
             "registeredSlots": controllersBySlot.keys.sorted().map(String.init).joined(separator: ",")])
+        mirrorRumbleOnTriggers(controllerId: controllerId, weakMagnitude: weakMagnitude, strongMagnitude: strongMagnitude)
         let profile = NativeStreamRumbleProfile(
             weakMagnitude: weakMagnitude,
             strongMagnitude: strongMagnitude
@@ -1460,6 +1659,7 @@ final class NativeStreamInputBridge {
             }
         }
         sendCurrentGamepads(force: true)
+        applyFixedTriggerEffects()
     }
 
     private func sendCurrentGamepads(force: Bool) {
@@ -1471,8 +1671,20 @@ final class NativeStreamInputBridge {
         if virtualControllerEnabled, primaryPhysicalControllerSlot == nil {
             sendGamepadState(virtualGamepadState(connected: true), force: force)
         }
+        let dualSenseSlots = physicalControllerPassthroughEnabled
+            ? Set(controllersBySlot.keys.filter { usesDualSenseHID(slot: $0) }) : []
+        for slot in dualSenseRoutes.keys.filter({ dualSenseRoutes[$0] != .refused && !dualSenseSlots.contains($0) }) {
+            releaseDualSenseRoute(slot: slot, notifyingHost: true)
+        }
+        let dualShock4Slots = physicalControllerPassthroughEnabled
+            ? Set(controllersBySlot.keys.filter { usesDualShock4HID(slot: $0) }) : []
+        for slot in lastDualShock4States.keys.filter({ !dualShock4Slots.contains($0) }) {
+            lastDualShock4States.removeValue(forKey: slot)
+            sink?.sendReliableInput(encoder.encodeDualShock4Removal(gamepadIndex: slot))
+        }
         let activeControllerIDs: Set<Int> = {
-            var ids = physicalControllerPassthroughEnabled ? Set(controllersBySlot.keys) : []
+            var ids = physicalControllerPassthroughEnabled
+                ? Set(controllersBySlot.keys).subtracting(dualShock4Slots).subtracting(dualSenseSlots) : []
             if virtualControllerEnabled, primaryPhysicalControllerSlot == nil { ids.insert(0) }
             return ids
         }()
@@ -1537,7 +1749,57 @@ final class NativeStreamInputBridge {
         let state = virtualControllerEnabled && slot == primaryPhysicalControllerSlot
             ? NativeStreamGamepadMixer.merging(physical: physicalState, virtual: virtualGamepadInputState)
             : physicalState
-        sendGamepadState(state, force: force)
+        if usesDualSenseHID(slot: slot) {
+            sendDualSenseState(state, touchpadPressed: pressed((gamepad as? GCDualSenseGamepad)?.touchpadButton), force: force)
+        } else if usesDualShock4HID(slot: slot) {
+            sendDualShock4State(state, touchpadPressed: pressed((gamepad as? GCDualSenseGamepad)?.touchpadButton), force: force)
+        } else {
+            sendGamepadState(state, force: force)
+        }
+    }
+
+    /// The pad as both Sony HID routes report it.
+    private func sonyPadState(_ incoming: NativeStreamGamepadState, touchpadPressed: Bool)
+        -> (controllerId: Int, state: NvstHidPassthrough.SynthesizedDualShock4.State) {
+        let game = NativeStreamControllerHUDRouting.gameState(incoming, captured: controllerHUDActive)
+        return (game.controllerId, NvstHidPassthrough.SynthesizedDualShock4.State(
+            buttons: game.buttons, leftTrigger: game.leftTrigger, rightTrigger: game.rightTrigger,
+            leftStickX: game.leftStickX, leftStickY: game.leftStickY,
+            rightStickX: game.rightStickX, rightStickY: game.rightStickY,
+            touchpadPressed: touchpadPressed && !controllerHUDActive))
+    }
+
+    private func sendDualShock4State(_ incoming: NativeStreamGamepadState, touchpadPressed: Bool, force: Bool) {
+        let (controllerId, state) = sonyPadState(incoming, touchpadPressed: touchpadPressed)
+        guard force || lastDualShock4States[controllerId] != state else { return }
+        if lastDualShock4States[controllerId] == nil {
+            sink?.logInputEvent("controller slot \(controllerId) sent as synthesized DualShock 4")
+        }
+        lastDualShock4States[controllerId] = state
+        sink?.sendPartiallyReliableInput(encoder.encodeDualShock4State(state, gamepadIndex: controllerId))
+    }
+
+    /// Offers the pad to the host as a DualSense, then reports its state once the host has taken
+    /// it. Nothing is sent for the pad in between: the host cannot have it as two devices.
+    private func sendDualSenseState(_ incoming: NativeStreamGamepadState, touchpadPressed: Bool, force: Bool) {
+        let (controllerId, state) = sonyPadState(incoming, touchpadPressed: touchpadPressed)
+        switch dualSenseRoutes[controllerId] {
+        case nil:
+            dualSenseRoutes[controllerId] = .requested
+            sink?.logInputEvent("controller slot \(controllerId) offered to the host as a DualSense")
+            sink?.sendReliableInput(encoder.encodeDualSenseAnnouncement(gamepadIndex: controllerId))
+        case .requested:
+            // An offer made before the input channel opened is lost, so the keepalive repeats it;
+            // the transport sends the host only one.
+            if force { sink?.sendReliableInput(encoder.encodeDualSenseAnnouncement(gamepadIndex: controllerId)) }
+        case .active:
+            guard force || lastDualSenseStates[controllerId] != state else { return }
+            lastDualSenseStates[controllerId] = state
+            dualSenseSequence &+= 1
+            sink?.sendPartiallyReliableInput(encoder.encodeDualSenseState(state, gamepadIndex: controllerId, sequence: dualSenseSequence))
+        case .refused:
+            break
+        }
     }
 
     private func sendCurrentVirtualGamepadState() {
@@ -1865,6 +2127,12 @@ final class NativeStreamInputBridge {
     func setControllerMouseEmulation(_ enabled: Bool) {}
     var isControllerMouseEmulationEnabled: Bool { false }
     func setPhysicalControllerPassthrough(_ enabled: Bool) {}
+    func setDualShock4HIDAvailable(_ available: Bool) {}
+    func setDualSensePassthrough(_ enabled: Bool) {}
+    func setTriggerRumbleStrength(_ strength: Double) {}
+    func setFixedTriggerEffects(left: NvstHidPassthrough.DualSense.TriggerEffect, right: NvstHidPassthrough.DualSense.TriggerEffect) {}
+    func dualSenseRouteAnswered(controllerId: Int, accepted: Bool) {}
+    func applyDualSenseOutput(controllerId: Int, output: NvstHidPassthrough.DualSense.Output) {}
     func setPhoneRumbleFallback(_ enabled: Bool) {}
     func attach() {}
     func detach() {}

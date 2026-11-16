@@ -5,6 +5,7 @@ import Foundation
 struct NativeStreamNVSTInput {
     enum Output {
         case control(NvstControlCommand), gamepad(NvstGamepadPacket), heartbeat
+        case hidReport(NvstHidPassthrough.Report), hidChange(NvstHidPassthrough.ChangeEvent)
         case touch(NvstControlCommand, records: Int)
     }
     enum InputError: Error { case malformed, unsupported(UInt32) }
@@ -57,6 +58,12 @@ struct NativeStreamNVSTInput {
         case 13:
             guard bytes.count == 6 else { throw InputError.malformed }
             packet = NvstRemoteInput.hapticsState(enabled: word(4) != 0)
+        case 17:
+            guard let report = NvstHidPassthrough.Report(event: Data(bytes)) else { throw InputError.malformed }
+            return [.hidReport(report)]
+        case 18:
+            guard let change = NvstHidPassthrough.ChangeEvent(event: Data(bytes)) else { throw InputError.malformed }
+            return [.hidChange(change)]
         case 23:
             guard let text = String(bytes: bytes.dropFirst(4), encoding: .utf8) else { throw InputError.malformed }
             return NvstRemoteInput.utf8TextPackets(forText: text).packets.map {

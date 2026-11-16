@@ -81,6 +81,10 @@ public final class NvstNativeBundle: @unchecked Sendable {
     public var onSeatStats: (@Sendable (NvstSeatStats) -> Void)?
     public var onSeatTermination: (@Sendable (NvstSeatTermination) -> Void)?
     public var onHapticEvents: (@Sendable ([NvstHapticEvent]) -> Void)?
+    /// An output report the seat wrote to a HID device this client announced.
+    public var onHidOutputReport: (@Sendable (NvstHidPassthrough.Report) -> Void)?
+    /// The seat's answer to a HID device this client announced under a request id.
+    public var onHidChangeResponse: (@Sendable (NvstHidPassthrough.ChangeResponse) -> Void)?
     public var onHdrMode: (@Sendable (NvstHdrModeNotification) -> Void)?
     /// The seat's live session-limit timer (`0x0103`), parsed from the same JSON the vendor client reads.
     public var onSessionLimitUpdate: (@Sendable (StreamSessionLimitUpdate) -> Void)?
@@ -506,6 +510,14 @@ public final class NvstNativeBundle: @unchecked Sendable {
         }
         if let haptics = NvstHapticEvent.parse(command) {
             if !haptics.isEmpty { onHapticEvents?(haptics) }
+            return
+        }
+        if let report = NvstHidPassthrough.parseOutputReport(command) {
+            onHidOutputReport?(report)
+            return
+        }
+        if let response = NvstHidPassthrough.ChangeResponse.parse(command) {
+            onHidChangeResponse?(response)
             return
         }
         if let hdrMode = NvstHdrModeNotification.parse(command) {

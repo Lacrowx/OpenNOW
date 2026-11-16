@@ -2,9 +2,8 @@ import Foundation
 
 /// The window-facing corner of the NVST remote-input space: RI packet types 6, 15 and 16.
 ///
-/// This file is the codec only. Nothing in the app sends any of these, exactly as
-/// `NvstHidPassthrough` carries the DS4/DS5 wire formats with no runtime call site — the shape is
-/// worth keeping in a form that tests can pin, the wire is not worth guessing at.
+/// This file is the codec only. Nothing in the app sends any of these — the shape is worth
+/// keeping in a form that tests can pin, the wire is not worth guessing at.
 ///
 /// What is recovered, per type:
 ///

@@ -95,6 +95,16 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
     private var inputSequence: UInt16 = 0
     private var gamepadSequences: [UInt16: UInt16] = [:]
     private var registeredBitmap: UInt16 = NvstGamepadPacket.connectedBitmap
+    /// What the seat's DESCRIBE said about HID devices; nil until negotiated, or when it said nothing.
+    private(set) var seatHidCapability: NvstHidPassthrough.SeatCapability?
+    /// HID devices the seat has been told about, and each one's report counter.
+    private var announcedHidDevices: Set<UInt8> = []
+    private var hidSequences: [UInt8: UInt16] = [:]
+    private var hidOutputReportsLogged = 0
+    /// DualSense pads announced as themselves, by request id, with the device id the seat gave each.
+    private var dualSenseDevices = NvstHidPassthrough.DeviceTable()
+    private var onDualSenseRoute: (@Sendable (_ gamepadIndex: Int, _ accepted: Bool) -> Void)?
+    private var onDualSenseOutput: (@Sendable (_ gamepadIndex: Int, NvstHidPassthrough.DualSense.Output) -> Void)?
     private var activatedInput = false
     private var qosSequence: UInt32 = 0
     private var lastQosBytes: UInt64 = 0
@@ -155,6 +165,7 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
                 throw CancellationError()
             }
             rtsp = negotiated
+            seatHidCapability = negotiated.hidCapability
             if let preparationError { throw preparationError }
             videoLiveness = NativeStreamVideoLiveness(now: DispatchTime.now().uptimeNanoseconds)
             sampling = Task { [weak self] in
@@ -167,6 +178,14 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
             await close()
             throw error
         }
+    }
+
+    /// Who hears about a DualSense announced as itself: whether the seat took it, and what the
+    /// game then writes to it.
+    func setDualSenseHandlers(onRoute: @escaping @Sendable (_ gamepadIndex: Int, _ accepted: Bool) -> Void,
+                              onOutput: @escaping @Sendable (_ gamepadIndex: Int, NvstHidPassthrough.DualSense.Output) -> Void) {
+        onDualSenseRoute = onRoute
+        onDualSenseOutput = onOutput
     }
 
     private func prepareBundle(handoff: NVSTVideoHandoff, microphoneOffered: Bool) async -> NvstBundleReservation? {
@@ -186,6 +205,8 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
             }
             nativeBundle.onFailure = { [weak self] reason in Task { await self?.ifCurrent(generation) { $0.fail(reason) } } }
             nativeBundle.onHapticEvents = { [weak self] events in Task { await self?.ifCurrent(generation) { $0.onHaptics(events) } } }
+            nativeBundle.onHidOutputReport = { [weak self] report in Task { await self?.ifCurrent(generation) { $0.hidOutput(report) } } }
+            nativeBundle.onHidChangeResponse = { [weak self] response in Task { await self?.ifCurrent(generation) { $0.hidChangeResponse(response) } } }
             // The host's native bundle must offer the mic; legacy mic carriage is not announced.
             let mic = microphoneOffered && settings.keepMicEnabled
                 ? NvstNativeBundle.MicrophoneSetup(volume: 1, initiallyEnabled: true) : nil
@@ -381,10 +402,127 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
                         leftStickX: pad.leftStickX, leftStickY: pad.leftStickY, rightStickX: pad.rightStickX, rightStickY: pad.rightStickY,
                         gamepadIndex: pad.gamepadIndex, connectedBitmap: pad.connectedBitmap)
                     sent = bundle.sendInput(try sequenced.command.encoded) && sent
+                case .hidReport(let report):
+                    sent = try sendHid(report, on: bundle) && sent
+                case .hidChange(let change):
+                    if let index = NvstHidPassthrough.DualSense.gamepadIndex(requestId: change.deviceId) {
+                        sent = sendDualSenseChange(change, gamepadIndex: index, on: bundle) && sent
+                        break
+                    }
+                    // An add is sent with the device's first report, so only a removal the seat
+                    // knows about travels on its own.
+                    guard change.change == .removed, announcedHidDevices.remove(change.deviceId) != nil else { break }
+                    hidSequences[change.deviceId] = nil
+                    sent = sendHidChange(change, on: bundle) && sent
                 }
             }
             return sent
         } catch { return false }
+    }
+
+    private func sendHidChange(_ change: NvstHidPassthrough.ChangeEvent, on bundle: NvstNativeBundle) -> Bool {
+        let accepted = bundle.sendControl(NvstControlCommand(code: .remoteInput, payload: NvstRemoteInput.framed(
+            change.packet, framing: .enveloped, sequence: inputSequence, timestampMicroseconds: clock.elapsedMicroseconds())))
+        NSLog("[OpenNOW] hid device %d %@ sent=%d", Int(change.deviceId), change.change == .added ? "added" : "removed", accepted ? 1 : 0)
+        return accepted
+    }
+
+    /// A pad sent as a HID device is not also a gamepad: the bitmap goes out without it first.
+    private func unregisterGamepad(index: Int, on bundle: NvstNativeBundle) {
+        let padBits = UInt16(1 << index) | UInt16(1 << (index + 8))
+        guard registeredBitmap & padBits != 0 else { return }
+        registeredBitmap &= ~padBits
+        _ = bundle.sendControl(NvstInputActivation.deviceDescriptor(timestampMicroseconds: clock.elapsedMicroseconds(), connectedBitmap: registeredBitmap))
+    }
+
+    /// How long the seat gets to answer a DualSense announcement before the pad falls back.
+    private static let dualSenseAnswerTimeoutNanoseconds: UInt64 = 3_000_000_000
+
+    /// A DualSense announced as itself, or taken away again. The bridge names the pad by its
+    /// request id either way; a removal goes out under the id the seat gave it. An announcement
+    /// the seat does not answer in time counts as refused.
+    private func sendDualSenseChange(_ change: NvstHidPassthrough.ChangeEvent, gamepadIndex index: Int, on bundle: NvstNativeBundle) -> Bool {
+        let requestId = change.deviceId
+        guard change.change == .added else {
+            guard let seatId = dualSenseDevices.remove(request: requestId) else { return true }
+            return sendHidChange(NvstHidPassthrough.DualSense.removalEvent(deviceId: seatId), on: bundle)
+        }
+        guard !dualSenseDevices.isAnnounced(requestId) else { return true }
+        unregisterGamepad(index: index, on: bundle)
+        dualSenseDevices.request(requestId)
+        let generation = bundleGeneration
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.dualSenseAnswerTimeoutNanoseconds)
+            await self?.ifCurrent(generation) { $0.dualSenseAnswerTimedOut(requestId: requestId, gamepadIndex: index) }
+        }
+        return sendHidChange(change, on: bundle)
+    }
+
+    private func dualSenseAnswerTimedOut(requestId: UInt8, gamepadIndex: Int) {
+        guard dualSenseDevices.isAnnounced(requestId), dualSenseDevices.seatId(forRequest: requestId) == nil else { return }
+        _ = dualSenseDevices.remove(request: requestId)
+        NSLog("[OpenNOW] hid dualsense request %d unanswered", Int(requestId))
+        onDualSenseRoute?(gamepadIndex, false)
+    }
+
+    private func hidChangeResponse(_ response: NvstHidPassthrough.ChangeResponse) {
+        NSLog("[OpenNOW] hid change response request=%d status=%d flags=%x device=%d", Int(response.requestId), Int(response.status),
+              Int(response.flags), Int(response.deviceId))
+        guard let index = NvstHidPassthrough.DualSense.gamepadIndex(requestId: response.requestId) else { return }
+        guard let accepted = dualSenseDevices.resolve(response) else {
+            // Nobody is waiting for this pad any more: do not leave it attached on the seat.
+            if response.isAccepted, dualSenseDevices.requestId(forSeat: response.deviceId) == nil, let bundle {
+                _ = sendHidChange(NvstHidPassthrough.DualSense.removalEvent(deviceId: response.deviceId), on: bundle)
+            }
+            return
+        }
+        onDualSenseRoute?(index, accepted)
+    }
+
+    /// One report for a HID pad. A DualSense announced as itself stays silent until the seat has
+    /// named it and then reports under the seat's id. A synthesized pad's first report announces
+    /// it in the official client's order: the gamepad bitmap without it, then the HID add, then
+    /// reports.
+    private func sendHid(_ report: NvstHidPassthrough.Report, on bundle: NvstNativeBundle) throws -> Bool {
+        var report = report
+        if NvstHidPassthrough.DualSense.gamepadIndex(requestId: report.deviceId) != nil {
+            guard let seatId = dualSenseDevices.seatId(forRequest: report.deviceId) else { return true }
+            report = NvstHidPassthrough.Report(deviceId: seatId, kind: report.kind, reportType: report.reportType, data: report.data)
+        } else {
+            guard let index = NvstHidPassthrough.SynthesizedDualShock4.gamepadIndex(deviceId: report.deviceId) else { return false }
+            if announcedHidDevices.insert(report.deviceId).inserted {
+                unregisterGamepad(index: index, on: bundle)
+                _ = sendHidChange(NvstHidPassthrough.SynthesizedDualShock4.changeEvent(gamepadIndex: index, connected: true), on: bundle)
+            }
+        }
+        guard seatHidCapability?.usesPartiallyReliableTransfer(deviceId: report.deviceId) == true else {
+            return bundle.sendControl(report.command(sequence: nil, timestampMicroseconds: clock.elapsedMicroseconds()))
+        }
+        let sequence = (hidSequences[report.deviceId] ?? 0) &+ 1
+        hidSequences[report.deviceId] = sequence
+        return bundle.sendInput(try report.command(sequence: sequence, timestampMicroseconds: clock.elapsedMicroseconds()).encoded)
+    }
+
+    /// A HID pad has no haptic command of its own: the game's rumble arrives as the pad's output
+    /// report. A DualSense's report also carries its trigger effects, and the seat may ask it
+    /// for a feature report, which is answered here.
+    private func hidOutput(_ report: NvstHidPassthrough.Report) {
+        if hidOutputReportsLogged < 5 {
+            hidOutputReportsLogged += 1
+            NSLog("[OpenNOW] hid output device=%d type=%d bytes=%d head=%@", Int(report.deviceId), Int(report.reportType), report.data.count,
+                  report.data.prefix(12).map { String(format: "%02x", $0) }.joined())
+        }
+        if let requestId = dualSenseDevices.requestId(forSeat: report.deviceId),
+           let index = NvstHidPassthrough.DualSense.gamepadIndex(requestId: requestId) {
+            if let answer = NvstHidPassthrough.DualSense.response(toGetReport: report) {
+                _ = bundle?.sendControl(answer.command(sequence: nil, timestampMicroseconds: clock.elapsedMicroseconds()))
+            } else if let output = NvstHidPassthrough.DualSense.output(in: report) {
+                onDualSenseOutput?(index, output)
+            }
+            return
+        }
+        guard let rumble = NvstHidPassthrough.SynthesizedDualShock4.rumble(in: report) else { return }
+        onHaptics([rumble])
     }
 
     private func requestKeyframe() {
