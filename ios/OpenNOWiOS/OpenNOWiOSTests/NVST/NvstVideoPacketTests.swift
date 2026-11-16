@@ -208,6 +208,21 @@ struct NvstVideoPacketTests {
         #expect(NvstFrameReassembler.strippingTrailingAccessUnitDelimiter(plain) == plain)
     }
 
+    /// A frame the seat sent on 2026-11-16 (twice that evening, 261 bytes both times, with no
+    /// packet lost) had five zero bytes between its first start code and the next one. Split on
+    /// start codes alone that is a two-byte unit of zeros; it went to VideoToolbox as picture
+    /// data and the frame was rejected with -12909, taking the next frame with it. A unit never
+    /// ends in a zero byte, so zeros in front of a start code are padding.
+    @Test func zeroBytesInFrontOfAStartCodeArePaddingNotPictureData() {
+        let first: [UInt8] = [0x02, 0x01, 0xd4, 0x98, 0xaa]
+        let second: [UInt8] = [0x02, 0x01, 0x4f, 0x01, 0xbb]
+        let startCode: [UInt8] = [0x00, 0x00, 0x00, 0x01]
+        let accessUnit = Data(startCode + [0x00, 0x00] + startCode + first + [0x00] + startCode + second)
+
+        let sample = NvstElementaryStream.prepare(accessUnit, codec: .hevc).sample
+        #expect(sample == Data([0x00, 0x00, 0x00, 0x05] + first + [0x00, 0x00, 0x00, 0x05] + second))
+    }
+
     @Test func aStartPacketWithoutNearbyAnnexBVideoIsDropped() throws {
         let assembler = NvstFrameReassembler()
         let noise = [UInt8](repeating: 0x81, count: NvstAnnexB.maxPictureHeaderBytes + 8)

@@ -143,7 +143,18 @@ public enum NvstElementaryStream {
     }
 
     /// Walks Annex-B NAL units in place, handing each one's header offset and length to `body`.
-    private static func forEachNalUnit(base: UnsafePointer<UInt8>, count: Int, _ body: (Int, Int) -> Void) {
+    ///
+    /// Zero bytes in front of a start code are padding (`trailing_zero_8bits`), not the end of
+    /// the unit before them: a NAL unit never ends in 0x00. A unit that is nothing but such zeros
+    /// is therefore no unit at all. The seat does send them — a 261-byte frame with five zeros
+    /// after its first start code, seen twice on 2026-11-16 — and handing that two-byte "unit" to
+    /// VideoToolbox as picture data got the whole frame rejected with -12909.
+    private static func forEachNalUnit(base: UnsafePointer<UInt8>, count: Int, _ visit: (Int, Int) -> Void) {
+        func body(_ start: Int, _ length: Int) {
+            var end = start + length
+            while end > start, base[end - 1] == 0 { end -= 1 }
+            if end > start { visit(start, end - start) }
+        }
         guard count >= 3 else { return }
         var cursor = 0
         var currentStart: Int?
