@@ -70,6 +70,27 @@ enum SessionLifecyclePolicy {
         (1...3).contains(status)
     }
 
+    /// How a session the poll loop finds ready reaches the streamer.
+    enum ReadySessionHandoff: Equatable {
+        case connect
+        /// Claim it (CloudMatch `RESUME`) first.
+        case claimThenConnect
+        /// Let the user rejoin or end it; rejoining claims it.
+        case askFirst
+    }
+
+    /// Status 3 means the seat has already streamed to a client. When that client was an earlier
+    /// run of the app, which ended without a TEARDOWN, the seat still belongs to it: it answers
+    /// the new connection's OPTIONS, DESCRIBE and SETUP, never answers ANNOUNCE, closes the
+    /// connection and ends the session a few seconds later (seen on the Apple TV 2026-11-16, three
+    /// relaunches). The same sessions connected once they had been claimed. A session this run
+    /// launched or claimed itself needs nothing more.
+    static func readySessionHandoff(status: Int, restoredFromEarlierRun: Bool,
+                                    asksBeforeRejoining: Bool) -> ReadySessionHandoff {
+        guard restoredFromEarlierRun, status == 3 else { return .connect }
+        return asksBeforeRejoining ? .askFirst : .claimThenConnect
+    }
+
     static func isEnded(_ error: Error) -> Bool {
         if error is RemoteSessionEndedError { return true }
         let error = error as NSError

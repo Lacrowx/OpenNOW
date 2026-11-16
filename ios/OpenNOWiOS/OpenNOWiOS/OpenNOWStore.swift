@@ -2527,12 +2527,16 @@ enum OpenNOWPlatform {
     static let displayName = "tvOS"
     static let authUnavailableReason = ""
     static let streamingUnavailableReason = ""
+    /// A game found still streaming after a relaunch is offered to the user (rejoin or end)
+    /// instead of being rejoined straight away.
+    static let asksBeforeRejoiningRestoredSession = true
     #else
     static let supportsNativeOAuth = true
     static let supportsEmbeddedStreamer = true
     static let displayName = "iOS"
     static let authUnavailableReason = ""
     static let streamingUnavailableReason = ""
+    static let asksBeforeRejoiningRestoredSession = false
     #endif
 
     /// Hardware identifier such as `iPhone16,1`. `UIDevice.model` only ever says "iPhone", which
@@ -6594,6 +6598,15 @@ final class OpenNOWStore: ObservableObject {
 
     /// A launch that is waiting on the user to confirm ending the session it would replace.
     @Published private(set) var pendingLaunchConflict: LaunchConflict?
+    /// The running session the rejoin screen is up for (tvOS). It goes up when a relaunch finds
+    /// the session still streaming, to ask whether to rejoin or end it, and whenever a session is
+    /// claimed for a rejoin (`isLaunchingSession`), so that wait is not spent on a screen that
+    /// shows nothing. It comes down when the streamer or the queue screen takes over, when the
+    /// session ends or when it is dismissed, and stays with `sessionError` when the claim failed.
+    @Published private var rejoinScreenSessionID: String?
+    var sessionOnRejoinScreen: ActiveSession? {
+        activeSession.flatMap { $0.id == rejoinScreenSessionID ? $0 : nil }
+    }
     @Published private(set) var pendingTerminationConfirmation: SessionTerminationConfirmation?
 
     /// The last failure, classified. `lastError` still carries the same text for anything that
@@ -7925,6 +7938,12 @@ final class OpenNOWStore: ObservableObject {
 
     func cancelPendingLaunch() {
         pendingLaunchConflict = nil
+    }
+
+    /// Leaves the session running, and a claim in progress going; the session stays reachable as
+    /// the running game.
+    func dismissRejoinScreen() {
+        rejoinScreenSessionID = nil
     }
 
     /// Records a failure in both channels at once.
@@ -9545,8 +9564,11 @@ final class OpenNOWStore: ObservableObject {
         candidate.status == 1 || candidate.status == 2 || candidate.status == 3
     }
 
-    private func startSessionTasks() {
+    /// - Parameter restoredFromEarlierRun: the session was persisted by an earlier run of the app
+    ///   and has not been launched or claimed by this one.
+    private func startSessionTasks(restoredFromEarlierRun: Bool = false) {
         guard !isEndingSession else { return }
+        rejoinScreenSessionID = nil
         if activeSession != nil, authSession != nil {
             Task { await NotificationManager.shared.requestPermission() }
         }
@@ -9619,6 +9641,19 @@ final class OpenNOWStore: ObservableObject {
                         "Poll id=\(polled.id, privacy: .public) status=\(polled.status) queue=\(polled.queuePosition ?? -1) showOverlay=\(self.showStreamLoading) signalingServer=\(polled.signalingServer ?? "nil", privacy: .public) signalingUrl=\(polled.signalingUrl ?? "nil", privacy: .public) mediaIp=\(polled.mediaIp ?? "nil", privacy: .public) mediaPort=\(polled.mediaPort)"
                     )
                     let readyForStreamer = self.isReadyForStreamer(polled)
+                    let handoff = SessionLifecyclePolicy.readySessionHandoff(
+                        status: polled.status, restoredFromEarlierRun: restoredFromEarlierRun,
+                        asksBeforeRejoining: OpenNOWPlatform.asksBeforeRejoiningRestoredSession)
+                    if readyForStreamer, handoff == .askFirst {
+                        // The session is left as it is after leaving a stream: running, with no
+                        // streamer. Rejoining goes through `reopenStreamer`, which claims it.
+                        self.logger.notice("Restored session id=\(polled.id, privacy: .public) is still streaming; asking before rejoining.")
+                        self.rejoinScreenSessionID = polled.id
+                        self.showStreamLoading = false
+                        self.sessionPollTask = nil
+                        self.startSessionReconciliation()
+                        break
+                    }
                     if readyForStreamer {
                         readyPollStreak += 1
                         if readySince == nil {
@@ -9650,7 +9685,21 @@ final class OpenNOWStore: ObservableObject {
                             self.sessionPollTask?.cancel()
                             continue
                         }
-                        let handoffSession = await self.prepareSessionForStreamer(polled)
+                        let handoffSession: ActiveSession
+                        if handoff == .claimThenConnect {
+                            // A failed claim is retried by the next poll, like a failed poll.
+                            let claimed = try await self.claimForStreamer(
+                                polled, auth: refreshed,
+                                requestedSettings: self.nativeLaunchSettings(for: self.requestedReopenSettings,
+                                                                             context: "restoredSession"))
+                            try Task.checkCancellation()
+                            guard generation == self.authGeneration, operation == self.sessionOperationGeneration else { break }
+                            self.activeStreamSettings = claimed.settings
+                            handoffSession = claimed.session
+                            self.logger.notice("Claimed restored session id=\(polled.id, privacy: .public) before streamer handoff.")
+                        } else {
+                            handoffSession = await self.prepareSessionForStreamer(polled)
+                        }
                         guard !Task.isCancelled, operation == self.sessionOperationGeneration else { break }
                         self.logger.notice(
                             "Session ready for streamer handoff id=\(handoffSession.id, privacy: .public) status=\(handoffSession.status) readyStreak=\(readyPollStreak) readyHoldSeconds=\(Int(readyHoldElapsed)). Presenting iOS streamer."
@@ -9835,6 +9884,36 @@ final class OpenNOWStore: ObservableObject {
         return session
     }
 
+    /// Claims a polled session for a new streamer connection (CloudMatch `RESUME`), with the
+    /// stream profile the session already runs. Returns it with the settings the claim was made with.
+    private func claimForStreamer(
+        _ polled: ActiveSession, auth: AuthSession, requestedSettings: AppSettings
+    ) async throws -> (session: ActiveSession, settings: AppSettings) {
+        let candidate = RemoteSessionCandidate(
+            id: polled.id,
+            appId: polled.allocatedAppId,
+            status: polled.status,
+            serverIp: polled.serverIp,
+            streamSettingsSignature: nil,
+            resolution: polled.negotiatedStreamProfile?.resolution,
+            fps: polled.negotiatedStreamProfile?.fps,
+            colorQuality: polled.negotiatedStreamProfile?.colorQuality,
+            hdrEnabled: polled.finalizedStreamingFeatures?.trueHdr
+        )
+        let streamSettings = streamSettingsByAdoptingRemoteProfile(candidate, base: requestedSettings, session: auth)
+        let claimed = try await api.claimSession(
+            session: auth,
+            candidate: candidate,
+            game: polled.game,
+            streamingBaseUrl: polled.streamingBaseUrl,
+            vpcId: polled.zone,
+            settings: streamSettings,
+            deviceId: persistentDeviceId(),
+            touchProvisionedOverride: polled.touchProvisioned
+        )
+        return (claimed, streamSettings)
+    }
+
     private func reopenCurrentSession(_ session: ActiveSession) async {
         guard !isEndingSession, !isLaunchingSession else { return }
         let generation = authGeneration
@@ -9848,6 +9927,8 @@ final class OpenNOWStore: ObservableObject {
         sessionReconciliationTask = nil
         sessionAvailability = .checking
         isLaunchingSession = true
+        // Claiming takes a few seconds, wherever the rejoin was asked for.
+        rejoinScreenSessionID = session.id
         defer {
             if operation == sessionOperationGeneration {
                 isLaunchingSession = false
@@ -9882,36 +9963,13 @@ final class OpenNOWStore: ObservableObject {
                 return
             }
 
-            let candidate = RemoteSessionCandidate(
-                id: polled.id,
-                appId: polled.allocatedAppId,
-                status: polled.status,
-                serverIp: polled.serverIp,
-                streamSettingsSignature: nil,
-                resolution: polled.negotiatedStreamProfile?.resolution,
-                fps: polled.negotiatedStreamProfile?.fps,
-                colorQuality: polled.negotiatedStreamProfile?.colorQuality,
-                hdrEnabled: polled.finalizedStreamingFeatures?.trueHdr
-            )
-            let streamSettings = streamSettingsByAdoptingRemoteProfile(
-                candidate, base: requestedStreamSettings, session: refreshed
-            )
-            let claimed = try await api.claimSession(
-                session: refreshed,
-                candidate: candidate,
-                game: session.game,
-                streamingBaseUrl: session.streamingBaseUrl,
-                vpcId: session.zone,
-                settings: streamSettings,
-                deviceId: persistentDeviceId(),
-                touchProvisionedOverride: session.touchProvisioned
-            )
+            let claimed = try await claimForStreamer(polled, auth: refreshed, requestedSettings: requestedStreamSettings)
             try Task.checkCancellation()
             guard generation == authGeneration, operation == sessionOperationGeneration else { return }
-            activeSession = claimed
-            activeStreamSettings = streamSettings
+            activeSession = claimed.session
+            activeStreamSettings = claimed.settings
             sessionAvailability = .available
-            setStreamSession(claimed, reason: "reopenStreamer.claimed")
+            setStreamSession(claimed.session, reason: "reopenStreamer.claimed")
             lastError = nil
             sessionError = nil
         } catch where OpenNOWErrorPresenter.isCancellation(error) {
@@ -10048,7 +10106,7 @@ final class OpenNOWStore: ObservableObject {
         }
         showStreamLoading = true
         queueOverlayVisible = false
-        startSessionTasks()
+        startSessionTasks(restoredFromEarlierRun: true)
         syncTrackedSessionSurface()
     }
 
@@ -10204,6 +10262,7 @@ final class OpenNOWStore: ObservableObject {
         )
         streamSession = session
         if let session {
+            rejoinScreenSessionID = nil
             beginSessionReport(for: session)
         }
         syncTrackedSessionSurface()
