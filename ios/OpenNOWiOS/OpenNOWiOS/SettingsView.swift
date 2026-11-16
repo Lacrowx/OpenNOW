@@ -1267,7 +1267,25 @@ struct SettingsView: View {
                 Text("Set strength to 0% to turn vibration off.")
                 #endif
             }
+
+            #if os(tvOS)
+            Section {
+                Toggle("DualSense Trigger Effects", isOn: $store.settings.dualSensePassthrough)
+                settingsSlider("Rumble on Triggers", value: $store.settings.triggerRumbleStrength,
+                    range: NativeStreamTriggerRumbleStrength.range, step: NativeStreamTriggerRumbleStrength.step,
+                    format: NativeStreamTriggerRumbleStrength.label)
+                NavigationLink {
+                    TVTriggerEffectTestView()
+                        .hidingTabBarWhenPushed()
+                } label: {
+                    Text("Test Trigger Effects")
+                }
+            } header: {
+                Text("Experimental")
+            } footer: {
+                Text("Offers a PS5 controller to the game as a DualSense instead of a DualShock 4, so supporting games can drive the adaptive triggers. If the server does not accept it, the controller is sent as before after a few seconds. Rumble on Triggers makes a PS5 controller's triggers vibrate with the game's rumble while you pull them, when the server only knows the controller as a DualShock 4. Its strength is separate from Vibration Strength. Both apply to new sessions. The test plays each effect on the controller without a game.")
             }
+            #endif
 
             #if os(iOS)
             if store.settings.controllerTouchPromptDismissed {
