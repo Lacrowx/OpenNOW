@@ -1,0 +1,50 @@
+name: tvOS Build
+
+on:
+  push:
+    paths:
+      - "ios/**"
+      - ".github/workflows/tvos-build.yml"
+  pull_request:
+    paths:
+      - "ios/**"
+      - ".github/workflows/tvos-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    # The app needs the tvOS 27.1 SDK or later; this image ships Xcode 27.0, 27.1 and 27.2.
+    runs-on: xcode-27
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 27.2
+        run: sudo xcode-select -s /Applications/Xcode_27.2.app
+
+      - name: Install build tools
+        run: brew install xcodegen cmake
+
+      - name: Cache native libraries
+        id: native
+        uses: actions/cache@v4
+        with:
+          path: ios/OpenNOWtvOS/Frameworks
+          key: tvos-native-${{ hashFiles('ios/OpenNOWtvOS/BuildScripts/build-native-protocol-libs-tvos.py', 'ios/OpenNOWiOS/BuildScripts/build-native-protocol-libs.py') }}
+
+      - name: Build native libraries
+        if: steps.native.outputs.cache-hit != 'true'
+        run: python3 ios/OpenNOWtvOS/BuildScripts/build-native-protocol-libs-tvos.py
+
+      - name: Build app (unsigned)
+        run: sh ios/OpenNOWtvOS/BuildScripts/build.sh CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload build log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tvos-build-log
+          path: Build/tvos-build.log
