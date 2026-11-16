@@ -291,10 +291,28 @@ public enum SrtpKeyDerivation {
     }
 }
 
-/// Replay window for the video stream (64 packets, matching the observed vendor behavior).
+/// Replay window for an SRTP stream.
+///
+/// It was 64 packets, the RFC 3711 minimum. A retransmitted video packet arrives a round trip
+/// after its neighbours — hundreds of packets later at stream bitrates — and a window that small
+/// rejects it as a replay before it can fill its gap.
 public struct SrtpReplayWindow {
+    /// How far behind the newest packet an index is still accepted, in packets.
+    public static let size: UInt64 = 1024
     private var highestIndex: UInt64?
-    private var seen: UInt64 = 0
+    /// One bit per index modulo `size`, set once that index has been accepted. Fixed-size and
+    /// inline, so copying the window (the audio path keeps one per SSRC) allocates nothing.
+    private var seen = SIMD16<UInt64>()
+
+    private func isSeen(_ index: UInt64) -> Bool {
+        let slot = index % Self.size
+        return seen[Int(slot >> 6)] & (1 << (slot & 63)) != 0
+    }
+
+    private mutating func setSeen(_ index: UInt64, _ value: Bool) {
+        let slot = index % Self.size
+        if value { seen[Int(slot >> 6)] |= 1 << (slot & 63) } else { seen[Int(slot >> 6)] &= ~(1 << (slot & 63)) }
+    }
 
     public init() {}
 
@@ -327,27 +345,32 @@ public struct SrtpReplayWindow {
     public func wouldAccept(_ index: UInt64) -> Bool {
         guard let highest = highestIndex else { return true }
         if index > highest { return true }
-        let age = highest - index
-        return age < 64 && (seen & (1 << age)) == 0
+        return highest - index < Self.size && !isSeen(index)
     }
 
     public mutating func accept(_ index: UInt64) -> Bool {
         guard let highest = highestIndex else {
             highestIndex = index
-            seen = 1 // the highest itself is already seen (age 0)
+            setSeen(index, true)
             return true
         }
         if index > highest {
-            let delta = index - highest
-            // Every known index ages by delta; the previous highest becomes age delta.
-            seen = (delta >= 64) ? 0 : (seen << delta) | (1 << delta)
+            // The slots the window moves onto belonged to indices that have just aged out of it.
+            if index - highest >= Self.size {
+                seen = SIMD16<UInt64>()
+            } else {
+                var skipped = highest + 1
+                while skipped < index {
+                    setSeen(skipped, false)
+                    skipped += 1
+                }
+            }
             highestIndex = index
-            seen |= 1
+            setSeen(index, true)
             return true
         }
-        let age = highest - index
-        if age >= 64 || (seen & (1 << age)) != 0 { return false }
-        seen |= (1 << age)
+        if highest - index >= Self.size || isSeen(index) { return false }
+        setSeen(index, true)
         return true
     }
 }
