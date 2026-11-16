@@ -110,12 +110,7 @@ private struct IntroSetupView: View {
     @State private var step = Step.welcome
     let onFinish: () -> Void
 
-    #if os(tvOS)
-    /// A TV lays out in 1920 pt with far larger type; the phone column would be a narrow strip.
-    private static let columnWidth: CGFloat = .infinity
-    #else
     private static let columnWidth: CGFloat = 680
-    #endif
 
     private enum Step: Int, CaseIterable {
         case welcome, appearance, streaming, play, ready, geforceNow
@@ -152,12 +147,7 @@ private struct IntroSetupView: View {
             case .welcome: return "sparkles.tv"
             case .appearance: return "paintpalette"
             case .streaming: return "video.badge.waveform"
-            case .play:
-                #if os(tvOS)
-                return "gamecontroller"
-                #else
-                return "hand.tap"
-                #endif
+            case .play: return "hand.tap"
             case .ready: return "checkmark.seal"
             case .geforceNow: return "person.crop.circle.badge.checkmark"
             }
@@ -165,6 +155,15 @@ private struct IntroSetupView: View {
     }
 
     var body: some View {
+        #if os(tvOS)
+        TVConsoleSetupView(
+            step: step.rawValue, stepCount: Step.allCases.count, title: step.title, subtitle: step.subtitle,
+            primaryTitle: primaryTitle, onPrimary: advance,
+            onBack: step == .welcome ? nil : goBack,
+            onSkip: step == .geforceNow ? nil : { changeStep(to: .geforceNow) }
+        ) { stepContent }
+        .onChangeCompat(of: store.settings) { _ in store.persistSettings() }
+        #else
         GeometryReader { proxy in
             ZStack {
                 CatalogWallpaperBackdrop(
@@ -192,6 +191,7 @@ private struct IntroSetupView: View {
             }
         }
         .onChangeCompat(of: store.settings) { _ in store.persistSettings() }
+        #endif
     }
 
     private var header: some View {
@@ -230,35 +230,31 @@ private struct IntroSetupView: View {
         case .welcome:
             introCard {
                 Text("One library. Your favourite games.")
-                    .font(.title2.weight(.semibold))
+                    .introFont(.title2.weight(.semibold), tv: 32, weight: 900)
                 Text("Browse your GeForce NOW library, choose a server when it matters, and keep an eye on the queue while your rig gets ready.")
-                    .foregroundStyle(.secondary)
+                    .introFont(.body, tv: 19).foregroundStyle(.secondary)
                 Label("A quick setup, then you’re in.", systemImage: "checkmark.circle.fill")
-                    .font(.subheadline.weight(.medium))
+                    .introFont(.subheadline.weight(.medium), tv: 21, weight: 800)
                     .foregroundStyle(.tint)
             }
         case .appearance:
-            introCard {
-                Text("Accent").font(.headline)
-                Picker("Accent", selection: $store.settings.uiAccent) {
+            introCard("Accent") {
+                menuPicker("Accent", selection: $store.settings.uiAccent) {
                     ForEach(UIAccent.allCases) { accent in
                         Text(accent.label).tag(accent)
                     }
                 }
-                .pickerStyle(.menu)
                 Toggle("Catalog wallpaper", isOn: $store.settings.catalogWallpaperEnabled)
                 if store.settings.catalogWallpaperEnabled {
-                    Picker("Wallpaper", selection: $store.settings.catalogWallpaperPreset) {
+                    menuPicker("Wallpaper", selection: $store.settings.catalogWallpaperPreset) {
                         ForEach(CatalogWallpaperPreset.allCases) { preset in
                             Text(preset.label).tag(preset)
                         }
                     }
-                    .pickerStyle(.menu)
                 }
             }
         case .streaming:
-            introCard {
-                Text("Stream profile").font(.headline)
+            introCard("Stream profile") {
                 ForEach([StreamPreset.recommended, .high, .lowDataSaver, .custom]) { preset in
                     Button {
                         store.settings = StreamSettingsResolver.settings(
@@ -267,6 +263,10 @@ private struct IntroSetupView: View {
                         )
                         store.persistSettings()
                     } label: {
+                        #if os(tvOS)
+                        TVConsoleSheetOptionLabel(label: preset.label, detail: preset.detail,
+                                                  current: store.settings.streamPreset == preset, focused: false)
+                        #else
                         HStack {
                             VStack(alignment: .leading, spacing: 2) {
                                 Text(preset.label).font(.subheadline.weight(.semibold))
@@ -281,8 +281,11 @@ private struct IntroSetupView: View {
                         .padding(12)
                         .background(accent.color.opacity(store.settings.streamPreset == preset ? 0.12 : 0.04),
                                     in: RoundedRectangle(cornerRadius: 12))
+                        #endif
                     }
+                    #if !os(tvOS)
                     .buttonStyle(.plain)
+                    #endif
                 }
             }
         case .play:
@@ -296,7 +299,7 @@ private struct IntroSetupView: View {
                 Toggle("Show stream status", isOn: $store.settings.showStatsOverlay)
                 #if os(tvOS)
                 Text("Frame rate and ping stay in a corner of the picture. The stream menu can show or hide them at any time.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .introFont(.footnote, tv: 18).foregroundStyle(.secondary)
                 #else
                 Text("The iPhone time and system indicators stay visible during play.")
                     .font(.footnote).foregroundStyle(.secondary)
@@ -311,48 +314,87 @@ private struct IntroSetupView: View {
                 #endif
                 summaryRow("Stream status", value: store.settings.showStatsOverlay ? "Visible" : "Hidden")
                 Text("You can revisit these choices any time in Settings.")
-                    .font(.footnote).foregroundStyle(.secondary)
+                    .introFont(.footnote, tv: 18).foregroundStyle(.secondary)
             }
         case .geforceNow:
             introCard {
                 Text("GeForce NOW provides the games and cloud rigs. OpenNOW is a client for the account you bring.")
-                    .foregroundStyle(.secondary)
+                    .introFont(.body, tv: 19).foregroundStyle(.secondary)
                 if let subscription = store.subscription {
                     Label(subscription.isGamePlayAllowed ? "Membership ready for gameplay" : "Choose a GeForce NOW membership to start games",
                           systemImage: subscription.isGamePlayAllowed ? "checkmark.circle.fill" : "info.circle.fill")
+                        #if os(tvOS)
+                        .foregroundStyle(subscription.isGamePlayAllowed ? TVConsoleTheme.mint : TVConsoleTheme.yellow)
+                        #else
                         .foregroundStyle(subscription.isGamePlayAllowed ? .green : .orange)
+                        #endif
                 } else {
                     Label("Membership could not be verified yet. You can browse, then check again before playing.",
                           systemImage: "info.circle")
-                        .foregroundStyle(.secondary)
+                        .introFont(.body, tv: 19).foregroundStyle(.secondary)
                 }
                 Button("Check membership again") {
                     Task { await store.refreshCatalog() }
                 }
+                #if !os(tvOS)
                 .buttonStyle(.bordered)
+                #endif
             }
         }
     }
 
-    private func introCard<Content: View>(@ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 16, content: content)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(20)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+    /// A card on iOS; on tvOS a `Section`, so that each child is a console row.
+    @ViewBuilder
+    private func introCard<Content: View>(_ heading: String? = nil, @ViewBuilder content: () -> Content) -> some View {
+        #if os(tvOS)
+        if let heading {
+            Section(heading, content: content)
+        } else {
+            Section(content: content)
+        }
+        #else
+        VStack(alignment: .leading, spacing: 16) {
+            if let heading {
+                Text(heading).font(.headline)
+            }
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(20)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        #endif
     }
 
+    /// A menu on iOS; on tvOS a row that opens the console choice panel.
+    @ViewBuilder
+    private func menuPicker<Value: Hashable, Options: View>(
+        _ title: String, selection: Binding<Value>, @ViewBuilder options: () -> Options
+    ) -> some View {
+        #if os(tvOS)
+        TVLabeledPicker(title, selection: selection, content: options)
+        #else
+        Picker(title, selection: selection, content: options)
+            .pickerStyle(.menu)
+        #endif
+    }
+
+    @ViewBuilder
     private func summaryRow(_ title: String, value: String) -> some View {
+        #if os(tvOS)
+        LabeledContent(title, value: value)
+        #else
         HStack {
             Text(title).foregroundStyle(.secondary)
             Spacer()
             Text(value).fontWeight(.semibold)
         }
+        #endif
     }
 
     private var footer: some View {
         HStack(spacing: 12) {
             if step != .welcome {
-                Button("Back") { changeStep(to: Step(rawValue: step.rawValue - 1) ?? .welcome) }
+                Button("Back", action: goBack)
                     .buttonStyle(.bordered)
             }
             Spacer()
@@ -361,23 +403,45 @@ private struct IntroSetupView: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
             }
-            Button(step == .geforceNow ? "Open Store" : step == .welcome ? "Get Started" : "Continue") {
-                if step == .geforceNow {
-                    store.persistSettings()
-                    onFinish()
-                } else if let next = Step(rawValue: step.rawValue + 1) {
-                    store.persistSettings()
-                    changeStep(to: next)
-                }
-            }
-            .buttonStyle(.borderedProminent)
+            Button(primaryTitle, action: advance)
+                .buttonStyle(.borderedProminent)
         }
+    }
+
+    private var primaryTitle: String {
+        step == .geforceNow ? "Open Store" : step == .welcome ? "Get Started" : "Continue"
+    }
+
+    private func advance() {
+        if step == .geforceNow {
+            store.persistSettings()
+            onFinish()
+        } else if let next = Step(rawValue: step.rawValue + 1) {
+            store.persistSettings()
+            changeStep(to: next)
+        }
+    }
+
+    private func goBack() {
+        changeStep(to: Step(rawValue: step.rawValue - 1) ?? .welcome)
     }
 
     private func changeStep(to next: Step) {
         withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.26)) {
             step = next
         }
+    }
+}
+
+private extension View {
+    /// The setup rows are console rows on tvOS, set in the console typeface.
+    @ViewBuilder
+    func introFont(_ font: Font, tv size: CGFloat, weight: CGFloat = 600) -> some View {
+        #if os(tvOS)
+        self.font(TVConsoleTheme.display(size, weight: weight))
+        #else
+        self.font(font)
+        #endif
     }
 }
 
