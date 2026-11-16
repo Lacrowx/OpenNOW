@@ -221,7 +221,7 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
             }
         }
         detail = "\(codec.rawValue) \(profile.resolutionString) @ \(profile.fps) fps"
-        print("[TVStream] start \(detail) endpoints=\(session.nativeRtspsEndpoints?.count ?? 0) display=\(UIScreen.main.maximumFramesPerSecond)Hz")
+        tvStreamDebug("[TVStream] start \(detail) endpoints=\(session.nativeRtspsEndpoints?.count ?? 0) display=\(UIScreen.main.maximumFramesPerSecond)Hz")
         codecLabel = codec.rawValue
         historyRecord = StreamSessionRecord(gameTitle: session.game.title,
             resolution: "\(profile.width)×\(profile.height)", targetFPS: profile.fps, codec: codecLabel,
@@ -249,10 +249,10 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
             onProgress: { [weak self] stage in Task { @MainActor in
                 guard let self, !self.stopped, !self.videoActive, !self.failed else { return }
                 self.status = "Connecting"
-                self.detail = stage.rawValue
-                print("[TVStream] stage \(stage.rawValue)")
+                self.detail = TVStreamProgress.line(for: stage)
+                tvStreamDebug("[TVStream] stage \(stage.rawValue)")
             } },
-            onDiagnostic: { print("[TVStream] nvst: \($0)") })
+            onDiagnostic: { tvStreamDebug("[TVStream] nvst: \($0)") })
         self.transport = transport
         startTask = Task { [weak self] in
             do {
@@ -268,7 +268,7 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
                 try await transport.start()
                 guard let self, !self.stopped, !self.failed else { return }
                 let hid = await transport.seatHidCapability
-                print("[TVStream] hid seat \(hid?.summary ?? "states no hidDeviceMask")")
+                tvStreamDebug("[TVStream] hid seat \(hid?.summary ?? "states no hidDeviceMask")")
                 // First, so a DualSense that is offered as itself is not announced as a DualShock 4 in between.
                 self.inputBridge.setDualSensePassthrough(self.settings.dualSensePassthrough)
                 self.inputBridge.setDualShock4HIDAvailable(hid?.supportsDualShock4 == true)
@@ -314,7 +314,7 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
         let modeHeld = TVDisplayMode.streamVideo(fps: Int(fps),
             width: Int(CMVideoFormatDescriptionGetDimensions(format).width), hdr: hdr)
         displayCriteria = hdr && !modeHeld ? AVDisplayCriteria(refreshRate: fps, formatDescription: format) : nil
-        print("[TVStream] video format transfer=\(transfer ?? "none") hdr=\(hdr)")
+        tvStreamDebug("[TVStream] video format transfer=\(transfer ?? "none") hdr=\(hdr)")
     }
 
     func retry() { stop(); onRetry?() }
@@ -322,7 +322,7 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
     private func update(_ sample: NativeStreamNVSTSample) {
         guard !stopped, !failed else { return }
         if sample.decoded > 0 {
-            if !videoActive { print("[TVStream] video active: \(sample.detail)") }
+            if !videoActive { tvStreamDebug("[TVStream] video active: \(sample.detail)") }
             videoActive = true
             if !reportedStable { reportedStable = true; onTransportStable() }
         }
@@ -347,7 +347,7 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
     private func logStats(_ sample: NativeStreamNVSTSample, ping: String) {
         let input = inputTimings
         let count = Double(max(1, input.count))
-        print(String(format: "[TVStream] stats ping=%@ jitter=%.1fms lost=%d input[sends=%d rawAgeMin=%.2f n=%d age mean=%.2f max=%.2f send mean=%.2f max=%.2f]ms ",
+        tvStreamDebug(String(format: "[TVStream] stats ping=%@ jitter=%.1fms lost=%d input[sends=%d rawAgeMin=%.2f n=%d age mean=%.2f max=%.2f send mean=%.2f max=%.2f]ms ",
                      ping, sample.jitterMilliseconds, sample.lost, inputSends, inputRawAgeMin * 1000, input.count,
                      input.eventAge / count * 1000, input.eventAgeMax * 1000,
                      input.send / count * 1000, input.sendMax * 1000) + sample.detail)
@@ -404,8 +404,8 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
         inputBridge.setControllerHUDActive(true)
         videoActive = false
         status = "Stream failed"
-        detail = reason
-        print("[TVStream] failed: \(reason)")
+        detail = TVStreamFailureMessage.plain(reason)
+        TVStreamLog.failure(reason); tvStreamDebug("[TVStream] failed: \(reason)")
     }
 
     private func terminated(_ event: NvstSeatTermination) {
@@ -465,7 +465,7 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
         }
         triggerFeelStore.set(triggerFeels, forGame: session.game.id)
         inputBridge.setFixedTriggerEffects(left: triggerFeels.left.effect, right: triggerFeels.right.effect)
-        print("[TVStream] trigger feels L2=\(triggerFeels.left.rawValue) R2=\(triggerFeels.right.rawValue) game=\(session.game.id)")
+        tvStreamDebug("[TVStream] trigger feels L2=\(triggerFeels.left.rawValue) R2=\(triggerFeels.right.rawValue) game=\(session.game.id)")
     }
 
     /// Controller input bypasses UIKit for the whole stream, so the menu is opened by reading the
@@ -516,5 +516,5 @@ extension TVStreamCoordinator: NativeStreamInputSink {
         }
     }
 
-    nonisolated func logInputEvent(_ message: String) { print("[TVStream] input: \(message)") }
+    nonisolated func logInputEvent(_ message: String) { tvStreamDebug("[TVStream] input: \(message)") }
 }

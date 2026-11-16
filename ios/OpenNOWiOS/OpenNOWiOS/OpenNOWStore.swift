@@ -6608,6 +6608,34 @@ final class OpenNOWStore: ObservableObject {
         activeSession.flatMap { $0.id == rejoinScreenSessionID ? $0 : nil }
     }
     @Published private(set) var pendingTerminationConfirmation: SessionTerminationConfirmation?
+    #if os(tvOS)
+    /// The failure the console shell tells the user about (tvOS). Set only when no screen already
+    /// shows it; cleared by dismissing it, so it comes back only with a new failure.
+    @Published private(set) var failureNotice: TVConsoleFailureNotice?
+
+    /// A catalog refresh says the login expired only once per run; a failed launch still says it.
+    private var expiredLoginNoticePosted = false
+
+    func dismissFailureNotice() { failureNotice = nil }
+
+    /// "Sign in again" on an expired login. The user chose it; nothing signs out on its own.
+    func signInAgainFromFailureNotice() {
+        failureNotice = nil
+        signOut()
+    }
+
+    private func postFailureNotice(_ failure: OpenNOWFailure) {
+        guard failureNotice == nil else { return }
+        failureNotice = TVConsoleFailureNotice.make(
+            failure: failure, queueScreenVisible: queueOverlayVisible,
+            rejoinScreenVisible: sessionOnRejoinScreen != nil, isSignedIn: user != nil)
+    }
+
+    /// For session messages that only exist as text.
+    private func postFailureNotice(message: String) {
+        postFailureNotice(OpenNOWFailure(kind: .unknown, message: message, recovery: .none, code: nil))
+    }
+    #endif
 
     /// The last failure, classified. `lastError` still carries the same text for anything that
     /// only needs a string; this adds the recovery action, which is the part worth showing.
@@ -7141,6 +7169,13 @@ final class OpenNOWStore: ObservableObject {
         installDebugStorePreview()
         user = UserProfile(userId: "library-preview", displayName: "Preview", email: nil, membershipTier: "Free")
         libraryGames = allGames
+        #if os(tvOS)
+        // `--opennow-failure-notice=expired|busy` reports a sample failure, for screenshots.
+        if let sample = ProcessInfo.processInfo.arguments
+            .first(where: { $0.hasPrefix("--opennow-failure-notice=") })?.split(separator: "=").last {
+            report(NSError(domain: "debug", code: sample == "expired" ? 401 : 503), context: .launch)
+        }
+        #endif
     }
     #endif
 
@@ -7591,6 +7626,14 @@ final class OpenNOWStore: ObservableObject {
                 lastError = nil
                 catalogError = nil
             }
+            #if os(tvOS)
+            // An expired or revoked login only shows here, as a failed refresh behind a cached catalog.
+            let refreshFailure = OpenNOWFailure.classify(error, context: .catalog)
+            if refreshFailure.kind == .authExpired, !expiredLoginNoticePosted {
+                expiredLoginNoticePosted = true
+                postFailureNotice(refreshFailure)
+            }
+            #endif
         }
     }
 
@@ -7724,21 +7767,33 @@ final class OpenNOWStore: ObservableObject {
         guard let session = authSession else {
             lastError = "Sign in first."
             sessionError = lastError
+            #if os(tvOS)
+            postFailureNotice(message: "Sign in first.")
+            #endif
             return
         }
         let generation = authGeneration
         let operation = sessionOperationGeneration
         if let launchRestriction = launchRestrictionMessage(for: game) {
             lastError = launchRestriction
+            #if os(tvOS)
+            postFailureNotice(message: launchRestriction)
+            #endif
             return
         }
         if StreamZonePolicy.isBlocked(zoneUrl) {
             lastError = StreamZonePolicy.blockedZoneMessage
+            #if os(tvOS)
+            postFailureNotice(message: StreamZonePolicy.blockedZoneMessage)
+            #endif
             return
         }
         isLaunchingSession = true
         showStreamLoading = true
         queueOverlayVisible = true
+        #if os(tvOS)
+        failureNotice = nil
+        #endif
         defer { if operation == sessionOperationGeneration { isLaunchingSession = false } }
         do {
             logger.info("Launch requested game=\(game.title, privacy: .public) zoneUrl=\(zoneUrl ?? "default", privacy: .public)")
@@ -7966,6 +8021,9 @@ final class OpenNOWStore: ObservableObject {
         case .account:
             accountError = failure.message
         }
+        #if os(tvOS)
+        postFailureNotice(failure)
+        #endif
         logger.error(
             "failure kind=\(failure.kind.rawValue, privacy: .public) context=\(String(describing: context), privacy: .public)"
         )
@@ -8322,11 +8380,17 @@ final class OpenNOWStore: ObservableObject {
         }
         guard remoteSessionIsAllowed(candidate) else {
             lastError = StreamZonePolicy.blockedZoneMessage
+            #if os(tvOS)
+            postFailureNotice(message: StreamZonePolicy.blockedZoneMessage)
+            #endif
             return
         }
         isLaunchingSession = true
         showStreamLoading = true
         queueOverlayVisible = true
+        #if os(tvOS)
+        failureNotice = nil
+        #endif
         defer { if operation == sessionOperationGeneration { isLaunchingSession = false } }
         do {
             logger.info("Resume requested candidateId=\(candidate.id, privacy: .public) status=\(candidate.status)")
@@ -8459,6 +8523,9 @@ final class OpenNOWStore: ObservableObject {
             guard generation == authGeneration else { return }
             lastError = "Disconnected from this device, but the cloud session could not be stopped. Check Active on Account to try again."
             sessionError = lastError
+            #if os(tvOS)
+            postFailureNotice(message: "Disconnected from this device, but the cloud session could not be stopped. Check Active on Account to try again.")
+            #endif
         }
     }
 
@@ -8538,6 +8605,9 @@ final class OpenNOWStore: ObservableObject {
         guard generation == authGeneration, operation == sessionOperationGeneration else { return }
         lastError = failures.isEmpty ? nil : "Could not stop every remote session: \(failures.joined(separator: ", "))"
         sessionError = lastError
+        #if os(tvOS)
+        if let lastError { postFailureNotice(message: lastError) }
+        #endif
     }
 
     private func clearLocalSessionState(reason: String) {
@@ -8681,10 +8751,16 @@ final class OpenNOWStore: ObservableObject {
             handleEndedSession(id: id, message: nil)
         case .failed:
             handleEndedSession(id: id, message: "The cloud host ended this session: \(event.summary)")
+            #if os(tvOS)
+            postFailureNotice(message: "The cloud host ended this session: \(event.summary)")
+            #endif
         case .paused, .disconnected:
             dismissStreamer()
             lastError = event.isSessionPause ? nil : "The host disconnected this stream: \(event.summary). Check the session to reconnect."
             sessionError = lastError
+            #if os(tvOS)
+            if let lastError { postFailureNotice(message: lastError) }
+            #endif
         }
     }
 
@@ -9241,6 +9317,9 @@ final class OpenNOWStore: ObservableObject {
         persistSettings()
         #if os(tvOS)
         TVDisplayMode.select(nil, save: true)
+        // tvOS-only data kept outside `settings`: Home wide-tile sizes (`TVConsoleHomeView.wideTilesKey`, private) and per-game trigger feels.
+        UserDefaults.standard.removeObject(forKey: "tvConsoleHomeWideTileIDs")
+        UserDefaults.standard.removeObject(forKey: TVTriggerFeelStore.key)
         #endif
         CatalogWallpaperStorage.pruneManagedWallpapers(keeping: nil)
         clearAccountScopedState()
@@ -9360,7 +9439,12 @@ final class OpenNOWStore: ObservableObject {
     }
 
     var shouldPresentPrintedWasteQueue: Bool {
-        shouldUsePrintedWasteQueue && !settings.hideServerSelector
+        #if os(tvOS)
+        // The picker is an iOS list with no console layout; launches choose the server themselves.
+        return false
+        #else
+        return shouldUsePrintedWasteQueue && !settings.hideServerSelector
+        #endif
     }
 
     /// Seconds since the active session started, or nil when there is no session.
@@ -9961,6 +10045,9 @@ final class OpenNOWStore: ObservableObject {
             guard SessionLifecyclePolicy.isLaunchable(polled.status) else {
                 lastError = "The cloud session is still cleaning up. Check again in a moment."
                 sessionError = lastError
+                #if os(tvOS)
+                postFailureNotice(message: "The cloud session is still cleaning up. Check again in a moment.")
+                #endif
                 syncTrackedSessionSurface()
                 return
             }
@@ -9993,6 +10080,9 @@ final class OpenNOWStore: ObservableObject {
             syncTrackedSessionSurface()
             lastError = "Couldn't check the cloud session. Your session has been kept; try again when your connection is available."
             sessionError = lastError
+            #if os(tvOS)
+            postFailureNotice(message: "Couldn't check the cloud session. Your session has been kept; try again when your connection is available.")
+            #endif
         }
     }
 

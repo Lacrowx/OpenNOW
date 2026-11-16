@@ -136,7 +136,9 @@ struct SettingsView: View {
     // Use the same type-erased path storage as the surrounding tab/split-view
     // navigation. A typed array can trap when SwiftUI compares column paths.
     @State private var path = NavigationPath()
+    #if !os(tvOS)
     @State private var bugReportDeck: BugReportPreflightDeck?
+    #endif
     @State private var searchText = ""
     @State private var showingResetConfirmation = false
     @State private var showingResetAppConfirmation = false
@@ -338,6 +340,7 @@ struct SettingsView: View {
         .task {
             await store.refreshAccountConnectors()
         }
+        #if !os(tvOS)
         // Presented from the stack root so both entry points — About and Advanced — reach it.
         .sheet(item: $bugReportDeck) { deck in
             BugReportView(deck: deck) { draft in
@@ -345,6 +348,7 @@ struct SettingsView: View {
             }
             .environmentObject(store)
         }
+        #endif
     }
 
     #if os(tvOS)
@@ -540,7 +544,9 @@ struct SettingsView: View {
         case .experimental:
             experimentalSection
         case .diagnostics:
+            #if !os(tvOS)
             reportProblemSection
+            #endif
             advancedSection
         }
     }
@@ -912,7 +918,9 @@ struct SettingsView: View {
                 }
             }
 
+            #if !os(tvOS)
             Toggle("Skip Server Selector", isOn: $store.settings.hideServerSelector)
+            #endif
 
             // tvOS has no other receiver, so there is nothing to choose.
             #if !os(tvOS)
@@ -1390,12 +1398,17 @@ struct SettingsView: View {
                 }
             }
 
+            // The console shell reads neither: they only shape the iOS queue backdrop and cards.
+            #if !os(tvOS)
             Toggle("Expressive Surfaces", isOn: $store.settings.expressiveUI)
             Toggle("Animated Selection", isOn: $store.settings.liveSelectedOutlines)
+            #endif
         } header: {
             Text("Appearance")
         } footer: {
+            #if !os(tvOS)
             Text("Expressive surfaces add the gradient washes and softer cards. Turning both off gives a flatter interface that costs less to draw.")
+            #endif
         }
     }
 
@@ -1407,6 +1420,8 @@ struct SettingsView: View {
                     Text(page.label).tag(page)
                 }
             }
+            // The console shell draws its own Home and cards, so these only shape the iOS catalog.
+            #if !os(tvOS)
             Toggle("Console Home", isOn: $store.settings.consoleHomeEnabled)
             Toggle("Compact Cards", isOn: $store.settings.compactGameCards)
             Toggle("Card Titles", isOn: $store.settings.showCardTitles)
@@ -1419,6 +1434,7 @@ struct SettingsView: View {
                 step: 0.05,
                 format: { String(format: "%.0f%%", $0 * 100) }
             )
+            #endif
             #if os(iOS)
             Toggle("Catalog Wallpaper", isOn: $store.settings.catalogWallpaperEnabled)
             if store.settings.catalogWallpaperEnabled {
@@ -1467,7 +1483,9 @@ struct SettingsView: View {
         } header: {
             Text("Catalog")
         } footer: {
+            #if !os(tvOS)
             Text("Turning card titles off leaves the grid as pure box art. The favourite badge puts a heart on artwork you have starred.")
+            #endif
         }
     }
 
@@ -1557,7 +1575,11 @@ struct SettingsView: View {
         } header: {
             Text("Privacy")
         } footer: {
+            #if os(tvOS)
+            Text("OpenNOW does not run usage analytics. Diagnostics stay on this Apple TV.")
+            #else
             Text("OpenNOW does not run usage analytics. Diagnostics leave this device only when you choose to export, upload logs, or submit a problem report.")
+            #endif
         }
     }
 
@@ -1571,6 +1593,7 @@ struct SettingsView: View {
         }
     }
 
+    #if !os(tvOS)
     private var reportProblemSection: some View {
         Section {
             Button {
@@ -1582,6 +1605,7 @@ struct SettingsView: View {
             Text("Sends what OpenNOW already knows about this device and your last session, so you don't have to remember your settings.")
         }
     }
+    #endif
 
     private var advancedSection: some View {
         Section {
@@ -1734,15 +1758,20 @@ struct SettingsView: View {
 
     private var aboutSection: some View {
         Section("About") {
+            #if !os(tvOS)
             Button {
                 bugReportDeck = store.bugReportPreflightDeck()
             } label: {
                 Label("Report a Problem", systemImage: "ladybug")
             }
+            #endif
 
             LabeledContent("OpenNOW \(OpenNOWPlatform.displayName)", value: "Version \(appVersion)")
             LabeledContent("Build", value: buildNumber)
             LabeledContent("Platform", value: OpenNOWPlatform.displayName)
+            #if os(tvOS)
+            LabeledContent("Apple TV port", value: "Unofficial fork · github.com/Lacrowx/OpenNOW")
+            #endif
             SettingsWebLink(title: "OpenNOW Repository", systemImage: "chevron.left.forwardslash.chevron.right",
                             url: URL(string: "https://github.com/OpenCloudGaming/OpenNOW")!)
             SettingsWebLink(title: "Kiefer", systemImage: "person.crop.circle",

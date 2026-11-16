@@ -68,7 +68,7 @@ enum TVDisplayMode {
         _ = center.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in
             MainActor.assumeIsolated { enteringForeground() }
         }
-        print("[TVStream] display choices \(choices.map(\.label)) selection=\(selection?.label ?? "Automatic")")
+        tvStreamDebug("[TVStream] display choices \(choices.map(\.label)) selection=\(selection?.label ?? "Automatic")")
         update()
     }
 
@@ -165,7 +165,7 @@ enum TVDisplayMode {
 
     private static func apply(_ mode: NSObject) {
         guard let display = tvOut(), display.responds(to: setCurrentMode) else { return }
-        print("[TVStream] display mode -> \(Int(number(mode, "width")))x\(Int(number(mode, "height"))) "
+        tvStreamDebug("[TVStream] display mode -> \(Int(number(mode, "width")))x\(Int(number(mode, "height"))) "
             + "\(number(mode, "refreshRate")) Hz \(dynamicRange(mode) ?? "?") \(mode)")
         _ = display.perform(setCurrentMode, with: mode)
     }

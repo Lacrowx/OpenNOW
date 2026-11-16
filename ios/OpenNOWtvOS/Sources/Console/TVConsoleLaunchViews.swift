@@ -264,6 +264,7 @@ struct TVConsoleQueueView: View {
         // The harmless choice takes focus: a stray Select must not cost a place in the queue.
         .defaultFocus($focus, .keepBrowsing)
         .onExitCommand { store.minimizeQueueOverlay() }
+        .overlay(alignment: .bottomTrailing) { TVControllerNotice(message: TVControllerMonitor.queueMessage) }
     }
 
     @ViewBuilder

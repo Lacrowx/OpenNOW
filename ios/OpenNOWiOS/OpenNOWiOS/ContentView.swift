@@ -244,6 +244,7 @@ private struct IntroSetupView: View {
                         Text(accent.label).tag(accent)
                     }
                 }
+                #if !os(tvOS)
                 Toggle("Catalog wallpaper", isOn: $store.settings.catalogWallpaperEnabled)
                 if store.settings.catalogWallpaperEnabled {
                     menuPicker("Wallpaper", selection: $store.settings.catalogWallpaperPreset) {
@@ -252,6 +253,7 @@ private struct IntroSetupView: View {
                         }
                     }
                 }
+                #endif
             }
         case .streaming:
             introCard("Stream profile") {
@@ -409,7 +411,11 @@ private struct IntroSetupView: View {
     }
 
     private var primaryTitle: String {
+        #if os(tvOS)
+        step == .geforceNow ? "Open Home" : step == .welcome ? "Get Started" : "Continue"
+        #else
         step == .geforceNow ? "Open Store" : step == .welcome ? "Get Started" : "Continue"
+        #endif
     }
 
     private func advance() {

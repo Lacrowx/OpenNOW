@@ -26,6 +26,7 @@ struct TVConsoleShell<Page: View>: View {
         .onPreferenceChange(TVConsoleHintsKey.self) { hints = $0 }
         .onReceive(input.presses, perform: handle)
         .onExitCommand(perform: exitAction)
+        .modifier(TVConsoleFailurePrompt())
         .onAppear { input.start() }
         .onDisappear { input.stop() }
     }

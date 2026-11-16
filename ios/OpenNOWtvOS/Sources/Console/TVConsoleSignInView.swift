@@ -129,13 +129,6 @@ struct TVConsoleSignInView: View {
                     .foregroundStyle(state.statusIsError ? TVConsoleTheme.coral : TVConsoleTheme.textMuted)
                     .lineLimit(2)
             }
-            // Tells the user what to do during the browser sign-in.
-            ForEach(Array(store.tvAuthLogs.suffix(4).enumerated()), id: \.offset) { _, line in
-                Text(line)
-                    .font(TVConsoleTheme.mono(14))
-                    .foregroundStyle(TVConsoleTheme.textMuted)
-                    .lineLimit(1)
-            }
         }
         .frame(width: 640, alignment: .leading)
     }

@@ -70,7 +70,7 @@ private final class TVStreamHostController: GCEventViewController {
         displayCriteriaObserver = coordinator.$displayCriteria.sink { [weak self] criteria in
             guard let manager = self?.view.window?.avDisplayManager else { return }
             manager.preferredDisplayCriteria = criteria
-            print("[TVStream] display criteria \(criteria == nil ? "cleared" : "set") matchContent=\(manager.isDisplayCriteriaMatchingEnabled)")
+            tvStreamDebug("[TVStream] display criteria \(criteria == nil ? "cleared" : "set") matchContent=\(manager.isDisplayCriteriaMatchingEnabled)")
         }
     }
 
@@ -138,6 +138,7 @@ private struct TVStreamOverlay: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .overlay(alignment: .bottomTrailing) { if !coordinator.failed { TVControllerNotice(videoActive: coordinator.videoActive) } }
         .overlay(alignment: coordinator.statsPosition.alignment) {
             if coordinator.statsVisible, coordinator.videoActive, !coordinator.failed,
                coordinator.showsClock || !coordinator.hudItems.isEmpty { statsHUD }

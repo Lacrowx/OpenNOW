@@ -126,7 +126,7 @@ struct TVConsoleLibraryView: View {
             }
         } else {
             TVConsoleCatalogNotice(title: "Your library is empty",
-                                   detail: "Games you own on your linked stores appear here.")
+                                   detail: "Games you own on linked stores appear here. Find and pin games from the Store tab.")
         }
     }
 

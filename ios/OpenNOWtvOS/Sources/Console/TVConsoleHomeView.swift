@@ -19,6 +19,11 @@ struct TVConsoleHomeView: View {
     @State private var selectedGameForDetails: CloudGame?
     @State private var pendingLaunchRequest: GameLaunchRequest?
 
+    /// What an empty Home says: loading, the catalog error, or that it is ready for pins.
+    private var emptyState: TVConsoleHomeEmptyState {
+        TVConsoleHomeEmptyState(isLoading: store.isLoadingGames, catalogError: store.catalogError)
+    }
+
     private static let wideTilesKey = "tvConsoleHomeWideTileIDs"
 
     /// Everything the grid shows, resolved once per update.
@@ -125,7 +130,7 @@ struct TVConsoleHomeView: View {
                     .font(TVConsoleTheme.mono(14))
                     .tracking(1.68)
                     .foregroundStyle(TVConsoleTheme.textMuted)
-                Text(game?.title ?? (isEmpty ? "Your Home is ready" : "Pin a game from Library"))
+                Text(game?.title ?? (isEmpty ? emptyState.title : "Pin a game from Library"))
                     .font(TVConsoleTheme.display(46))
                     .tracking(-0.92)
                     .foregroundStyle(TVConsoleTheme.label)
@@ -173,7 +178,8 @@ struct TVConsoleHomeView: View {
 
     private func grid(_ model: Model, current: TVConsoleHomeLayout.Item?) -> some View {
         TVConsoleTileGrid(centersSingleTile: model.games.isEmpty) {
-            ForEach(model.layout.items) { item in
+            // While loading or after a failure the notice below is all there is to focus.
+            ForEach(model.games.isEmpty && emptyState != .ready ? [] : model.layout.items) { item in
                 let game = item.gameID.flatMap { model.games[$0] }
                 let focused = focusedID == item.id
                 let isCurrent = current?.id == item.id
@@ -201,10 +207,21 @@ struct TVConsoleHomeView: View {
         }
         .overlay(alignment: .top) {
             if model.games.isEmpty {
-                Text("Pin games from Library to build your own layout")
-                    .font(TVConsoleTheme.display(18, weight: 700))
-                    .foregroundStyle(TVConsoleTheme.textMuted)
-                    .padding(.top, 86)
+                switch emptyState {
+                case .loading:
+                    TVConsoleCatalogNotice(title: "Loading your games…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .failed(let error):
+                    TVConsoleCatalogNotice(title: "Couldn’t reach the catalog", detail: error, actionTitle: "Try again") {
+                        Task { await store.refreshCatalog() }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                case .ready:
+                    Text("Pin games from Library to build your own layout")
+                        .font(TVConsoleTheme.display(18, weight: 700))
+                        .foregroundStyle(TVConsoleTheme.textMuted)
+                        .padding(.top, 86)
+                }
             }
         }
         // Also when focus comes back up from the dock: return to the tile it left, not the nearest one.
@@ -226,6 +243,7 @@ struct TVConsoleHomeView: View {
             )
         }
         guard let id = current?.gameID else {
+            guard emptyState == .ready else { return TVConsoleHints() }
             return TVConsoleHints(right: [.init(button: .select, label: "Add a game")])
         }
         return TVConsoleHints(
