@@ -34,6 +34,10 @@ public enum NvstReceiveEvent: Sendable {
     /// A sequence gap broke the decoder's reference chain; the feedback plane must ask for a
     /// fresh keyframe. The missing range is in extended RTP sequence space and can be NACKed.
     case recoveryNeeded(firstMissingIndex: UInt64, lastMissingIndex: UInt64)
+    /// These RTP sequence numbers are missing and the seat should send them again. The gap they
+    /// left stays open while an answer can still arrive, so this comes well before any
+    /// `recoveryNeeded` for the same packets.
+    case retransmissionWanted([UInt16])
     /// The reference chain is broken but nothing identifiable is missing in RTP sequence space
     /// (a hole in the GS stream sequence with contiguous RTP delivery — a slot consumed
     /// upstream, not a lost packet). Retransmission cannot repair it; a keyframe can, and so can
@@ -66,6 +70,8 @@ public struct NvstReceiverStats: Equatable, Sendable {
     /// inferred wire loss, as opposed to `droppedPackets`, which aggregates local rejections
     /// (authentication, parse, SSRC, stale) that say nothing about the network.
     public var finalizedLossPackets: UInt64 = 0
+    /// Retransmission requests and what came of them.
+    public var nack = NvstNackCounters()
     public var boundSSRC: UInt32?
     public var highestSequence: UInt32 = 0
     /// Packets whose GS flags claim start-of-frame, versus those the FEC-block gate actually
@@ -126,11 +132,13 @@ public final class NvstVideoReceiver: @unchecked Sendable {
     /// uses this one; the raw Mjolnir socket was reusing the seat's media SSRC instead.
     public static let clientSSRC: UInt32 = 0x4f4e_4f57
 
-    /// How long an open gap may wait for FEC repair before it is finalized as loss, in packets.
+    /// The most packets an open gap may wait for FEC repair before it is finalized as loss.
     /// A block's parity follows all of its sources, and the GS FEC index is 10 bits — up to 1023
     /// sources plus parity — so the repair for an early-frame hole can trail it by over a
-    /// thousand packets. At the measured ~8,500 packets/s that is ~140 ms of worst-case wait
-    /// before an unrepairable gap falls back to the keyframe path.
+    /// thousand packets. This is only the ceiling: the wait ends as soon as the frame behind the
+    /// gap is over (see `pushReorder`), because a packet count alone is not a time. At 5K the
+    /// stream runs ~8,500 packets/s and 1200 packets are ~140 ms, but a 1440p stream measured
+    /// ~1,000 packets/s (2026-11-16), where the same count held every frame back for 1.2 s.
     public static let fecRepairReorderWindow = 1200
 
     public enum ReceiverError: LocalizedError, Equatable, Sendable {
@@ -154,7 +162,13 @@ public final class NvstVideoReceiver: @unchecked Sendable {
     private let reassembler: NvstFrameReassembler
     private var replay = SrtpReplayWindow()
     private var reorder: [UInt64: NvstRtpVideoPacket] = [:]
+    /// The lowest-numbered packet waiting behind an open gap and the frame it belongs to, nil
+    /// while nothing waits. Kept alongside `reorder` because finding it scans the whole buffer.
+    private var firstBuffered: (index: UInt64, frameIndex: UInt32)?
     private var nextIndex: UInt64?
+    /// The newest packet seen, so a jump past it names exactly the packets that were skipped.
+    private var highestIndex: UInt64?
+    private var nack = NvstNackTracker()
     private var boundSSRC: UInt32?
     private var srtcpIndex: UInt32 = 0
     private var reportFailures: UInt64 = 0
@@ -249,8 +263,19 @@ public final class NvstVideoReceiver: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         reorder.removeAll()
+        firstBuffered = nil
         nextIndex = nil
+        highestIndex = nil
+        nack = NvstNackTracker()
         reassembler.reset()
+    }
+
+    /// The measured round trip to the seat, which is how long a retransmission takes to arrive.
+    public func updateRoundTrip(milliseconds: Double) {
+        guard milliseconds > 0 else { return }
+        lock.lock()
+        defer { lock.unlock() }
+        nack.roundTripNanoseconds = UInt64(milliseconds * 1_000_000)
     }
 
     /// Thread CPU time. Wall time cannot tell "this code is slow" from "this thread was not
@@ -295,8 +320,9 @@ public final class NvstVideoReceiver: @unchecked Sendable {
     }
     private var stageNanoseconds = StageNanoseconds()
 
-    /// Unprotects and processes one datagram from the video peer.
-    public func process(datagram: Data) -> [NvstReceiveEvent] {
+    /// Unprotects and processes one datagram from the video peer. `now` is the monotonic clock
+    /// in nanoseconds; it only times retransmission requests, and tests pass their own.
+    public func process(datagram: Data, now: UInt64 = DispatchTime.now().uptimeNanoseconds) -> [NvstReceiveEvent] {
         lock.lock()
         defer { lock.unlock() }
 
@@ -343,7 +369,15 @@ public final class NvstVideoReceiver: @unchecked Sendable {
         var events: [NvstReceiveEvent] = []
         let assembleStart = DispatchTime.now().uptimeNanoseconds
         defer { stageNanoseconds.assemble += DispatchTime.now().uptimeNanoseconds - assembleStart }
-        let ordered = arrivals.flatMap { pushReorder(index: $0.index, packet: $0.packet, events: &events) }
+        var ordered: [NvstRtpVideoPacket] = []
+        for (offset, arrival) in arrivals.enumerated() {
+            // The first arrival is the datagram itself; any others were rebuilt from it by FEC.
+            ordered += pushReorder(index: arrival.index, packet: arrival.packet, isFromWire: offset == 0, now: now, events: &events)
+        }
+        if !nack.isEmpty {
+            let due = nack.takeDue(now: now)
+            if !due.isEmpty { events.append(.retransmissionWanted(due.map { UInt16(truncatingIfNeeded: $0) })) }
+        }
         stageNanoseconds.reorder += DispatchTime.now().uptimeNanoseconds - assembleStart
         for candidate in ordered {
             reassembleLocked(candidate, events: &events)
@@ -351,6 +385,7 @@ public final class NvstVideoReceiver: @unchecked Sendable {
         // Snapshots of counters owned elsewhere, taken once per batch instead of once per packet:
         // the reassembler's lock and these running totals only change on frame/report boundaries.
         stats.abandonedFrames = reassembler.abandonedFrameCount
+        stats.nack = nack.counters
         stats.receiverReportFailures = reportFailures
         stats.lastReceiverReportFailure = lastReportFailure
         return events
@@ -616,7 +651,8 @@ public final class NvstVideoReceiver: @unchecked Sendable {
 
     // MARK: - Reorder
 
-    private func pushReorder(index: UInt64, packet: NvstRtpVideoPacket, events: inout [NvstReceiveEvent]) -> [NvstRtpVideoPacket] {
+    private func pushReorder(index: UInt64, packet: NvstRtpVideoPacket, isFromWire: Bool, now: UInt64,
+                             events: inout [NvstReceiveEvent]) -> [NvstRtpVideoPacket] {
         let expected = nextIndex ?? index
         if nextIndex == nil { nextIndex = index }
         if index < expected {
@@ -632,23 +668,46 @@ public final class NvstVideoReceiver: @unchecked Sendable {
             return []
         }
         if index > expected { stats.outOfOrderPackets += 1 }
-        if index - expected >= UInt64(reorderWindow),
-           // With FEC armed, a gap must outlive the chance of repair before it is loss: the
-           // block's parity packets arrive after all of its sources, which at 5K is up to ~1000
-           // packets after an early-frame hole — far past the plain reorder window. Holding the
-           // gap costs one frame a few milliseconds of delivery delay; finalizing it early costs
-           // the frame, a keyframe round trip, and the seat's frame-rate knock. The armed check
-           // runs only while a gap is already open, so the hot path never takes the extra lock.
-           !(index - expected < UInt64(Self.fecRepairReorderWindow) && fecRecovery.snapshot.isArmed) {
-            // The gap has aged past the reorder window: whatever is still missing below the first
-            // buffered packet is finalized loss, and only that range is skipped. The buffered
-            // packets arrived intact and are delivered below — flushing the whole buffer here
-            // turned one lost packet into 32: the up-to-31 successors it head-of-line-blocked were
-            // destroyed uncounted, taking their frames (and the decoder's reference chain) with
-            // them. A later gap among the survivors finalizes the same way on a later packet.
-            let firstAvailable = reorder.keys.min() ?? index
-            recordRecovery(first: expected, last: firstAvailable - 1, events: &events)
-            nextIndex = firstAvailable
+        if let highest = highestIndex, index <= highest {
+            if !nack.isEmpty { nack.noteArrived(index, wasResent: isFromWire) }
+        } else {
+            // Everything between the newest packet so far and this one was skipped. Ask for it
+            // straight away: the answer takes a round trip, and every frame behind the gap waits.
+            if let highest = highestIndex, index > highest + 1 { nack.noteMissing((highest + 1)...(index - 1), now: now) }
+            highestIndex = index
+        }
+        if index - expected >= UInt64(reorderWindow) {
+            let behindGap = firstBuffered.flatMap { $0.index < index ? $0 : nil } ?? (index: index, frameIndex: packet.frameIndex)
+            // With FEC armed, a gap must outlive the chance of repair before it is loss: the
+            // block's parity packets arrive after all of its sources, which at 5K is up to ~1000
+            // packets after an early-frame hole — far past the plain reorder window. Holding the
+            // gap costs one frame a few milliseconds of delivery delay; finalizing it early costs
+            // the frame, a keyframe round trip, and the seat's frame-rate knock.
+            //
+            // That chance ends with the frame behind the gap. Parity is sent with its own frame,
+            // so once a packet of a later frame is here, nothing that could fill the gap is still
+            // on its way — a lost parity packet, which no repair ever fills, included. Waiting
+            // out the full packet ceiling regardless held 1.2 s of frames back on a stream of
+            // small frames and then released them in one burst that overflowed the decode queue.
+            // The armed check runs only while a gap is already open, so the hot path never takes
+            // the extra lock.
+            let repairStillPossible = index - expected < UInt64(Self.fecRepairReorderWindow)
+                && packet.frameIndex == behindGap.frameIndex
+                && fecRecovery.snapshot.isArmed
+            // A requested retransmission is the other way the gap can still close. That wait is
+            // bounded in time by the tracker, not in packets.
+            if !repairStillPossible && !nack.isAwaiting(expected, now: now) {
+                // The gap has aged past the reorder window: whatever is still missing below the
+                // first buffered packet is finalized loss, and only that range is skipped. The
+                // buffered packets arrived intact and are delivered below — flushing the whole
+                // buffer here turned one lost packet into 32: the up-to-31 successors it
+                // head-of-line-blocked were destroyed uncounted, taking their frames (and the
+                // decoder's reference chain) with them. A later gap among the survivors finalizes
+                // the same way on a later packet.
+                recordRecovery(first: expected, last: behindGap.index - 1, events: &events)
+                nack.abandon(through: behindGap.index - 1)
+                nextIndex = behindGap.index
+            }
         }
         reorder[index] = packet
         stats.maxReorderDepth = max(stats.maxReorderDepth, UInt32(clamping: reorder.count))
@@ -657,6 +716,14 @@ public final class NvstVideoReceiver: @unchecked Sendable {
         while let cursor = nextIndex, let next = reorder.removeValue(forKey: cursor) {
             ready.append(next)
             nextIndex = cursor + 1
+        }
+        if reorder.isEmpty {
+            firstBuffered = nil
+        } else if !ready.isEmpty {
+            // Packets left the front while others stay behind a further gap: find the new front.
+            firstBuffered = reorder.min { $0.key < $1.key }.map { ($0.key, $0.value.frameIndex) }
+        } else if index < firstBuffered?.index ?? .max {
+            firstBuffered = (index, packet.frameIndex)
         }
         return ready
     }

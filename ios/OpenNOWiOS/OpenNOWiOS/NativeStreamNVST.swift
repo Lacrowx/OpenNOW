@@ -75,6 +75,9 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
     private let onTermination: @Sendable (NvstSeatTermination) -> Void
     private let onHaptics: @Sendable ([NvstHapticEvent]) -> Void
     private let onProgress: @Sendable (NvstRtspStage) -> Void
+    /// Receives the receiver's, the decode queue's and the decoder's own event lines (a gap given
+    /// up, a queue resync, a rejected frame). Nil keeps them silent.
+    private let onDiagnostic: (@Sendable (String) -> Void)?
     private let clock = NvstSessionClock()
     private var reserver: NvstLocalBundleReserver?
     private var rtsp: NvstRtspSession?
@@ -115,12 +118,14 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
          onFailure: @escaping @Sendable (String) -> Void,
          onTermination: @escaping @Sendable (NvstSeatTermination) -> Void,
          onHaptics: @escaping @Sendable ([NvstHapticEvent]) -> Void,
-         onProgress: @escaping @Sendable (NvstRtspStage) -> Void) {
+         onProgress: @escaping @Sendable (NvstRtspStage) -> Void,
+         onDiagnostic: (@Sendable (String) -> Void)? = nil) {
         self.allocation = allocation; self.settings = settings; self.profile = profile
         self.codec = codec; self.displayFPS = displayFPS
         self.onFrame = onFrame; self.onSample = onSample; self.onFailure = onFailure; self.onHaptics = onHaptics
         self.onTermination = onTermination
         self.onProgress = onProgress
+        self.onDiagnostic = onDiagnostic
     }
 
     func start() async throws {
@@ -140,7 +145,7 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
             disablesOwdCongestionControl: false, vsyncMode: .adaptive,
             announceOverrides: [("x-nv-vqos[0].dfc.enable", "0")])
         do {
-            let negotiated = try await NvstRtspNegotiator(reserver: reserver, onProgress: onProgress).negotiate(input,
+            let negotiated = try await NvstRtspNegotiator(reserver: reserver, logger: onDiagnostic, onProgress: onProgress).negotiate(input,
                 onVideoReady: { [weak self] handoff in
                     guard let self else { throw CancellationError() }
                     try await self.startVideo(handoff)
@@ -213,6 +218,7 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
         let decoder = NvstVideoToolboxDecoder(codec: handoff.codec,
             requiresTenBit444: StreamSettingsResolver.colorQuality(for: settings) == .tenBit444)
         self.decoder = decoder
+        if let onDiagnostic { decoder.onDecodeFailure = { _, message in onDiagnostic(message) } }
         let callback = onFrame
         decoder.onPixelBuffer = { pixelBuffer, time, _ in
             // Keep the zero-copy P010 surface and its transfer attachments for the iOS HDR renderer.
@@ -224,7 +230,7 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
         let pipeline = NvstVideoPipeline(decoder: decoder, clock: clock,
             frameTimeMicroseconds: UInt32(1_000_000 / max(1, profile.fps)),
             displayVsyncMicroseconds: UInt32(1_000_000 / max(1, displayFPS)),
-            logger: nil, mediaSink: nil,
+            logger: onDiagnostic, mediaSink: nil,
             onKeyframeNeeded: { [weak self] in Task { await self?.requestKeyframe() } },
             onFatalDecodeError: { [weak self] reason in
                 Task { await self?.fail(reason) }
@@ -238,6 +244,8 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
             pipeline.submit(unit)
         }
         receiver.onRecoveryNeeded = { [weak self] _ in Task { await self?.requestKeyframe() } }
+        receiver.onRetransmissionWanted = { sequences in pipeline.requestRetransmission(of: sequences) }
+        receiver.onDiagnostic = onDiagnostic
         feedback.setReportProvider { [weak receiver] in receiver?.receiverReportBlock() }
         try receiver.start()
     }
@@ -311,7 +319,12 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
                 maxWaitingQueueDepth: stats.maxReorderDepth, duplicatePackets: UInt32(clamping: stats.duplicatePackets),
                 micChatSentDataBytes: bundle.microphoneSentBytes)
             _ = bundle.sendPartiallyReliableControl(report.command)
-            _ = bundle.sendPartiallyReliableControl(NvstRtpNackStatsReport(frameNumber: frame).command)
+            _ = bundle.sendPartiallyReliableControl(NvstRtpNackStatsReport(frameNumber: frame,
+                nackRequestsSent: UInt32(clamping: stats.nack.requestsSent),
+                nackedPacketsRequested: UInt32(clamping: stats.nack.packetsRequested),
+                nackedPacketsReceived: UInt32(clamping: stats.nack.packetsReceived),
+                nackedPacketsUtilized: UInt32(clamping: stats.nack.packetsReceived),
+                nackedPacketsRetried: UInt32(clamping: stats.nack.packetsRetried)).command)
         }
         if lastControlStatsAt.map({ Date().timeIntervalSince($0) >= NvstControlChannelStatsReport.transmitInterval }) ?? true {
             let stats = bundle.controlChannelStats
@@ -409,7 +422,7 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
         if ping < 0, let rtsp { ping = await rtsp.controlRoundTripMilliseconds() }
         guard !stopped else { return }
         let state = pipeline.snapshot
-        let detail = "native NVST hardware=\(decoder.isHardwareAccelerated) thermal=\(ProcessInfo.processInfo.thermalState.rawValue) lowPower=\(ProcessInfo.processInfo.isLowPowerModeEnabled) resolution=\(decoder.decodedResolution ?? "pending") output=\(decoder.outputPixelFormatName) bitstream=\(decoder.bitstreamFormat?.summary ?? "pending") requestedColor=\(StreamSettingsResolver.colorQuality(for: settings).rawValue) requestedHDR=\(settings.hdrEnabled) sessions=\(decoder.sessionCreationCount) failed=\(decoder.failedFrameCount) errors=\(decoder.failureStatusSummary) decoderStages=\(decoder.stageTimingSummary) recovery[requests=\(keyframeRequests) control=\(controlKeyframeRequests) udp=\(udpKeyframeRequests) keyframes=\(stats.keyframesEmitted) feedback=\(bundle?.isFeedbackChannelOpen == true)] buffer=\(receiver.receiveBufferBytes) ack=\(state.frameAcksSent) pacing=\(state.pacingReportsSent) fec=\(stats.recoveredPackets) auth=\(stats.authenticatedPackets) \(state.timingSummary)"
+        let detail = "native NVST hardware=\(decoder.isHardwareAccelerated) thermal=\(ProcessInfo.processInfo.thermalState.rawValue) lowPower=\(ProcessInfo.processInfo.isLowPowerModeEnabled) resolution=\(decoder.decodedResolution ?? "pending") output=\(decoder.outputPixelFormatName) bitstream=\(decoder.bitstreamFormat?.summary ?? "pending") requestedColor=\(StreamSettingsResolver.colorQuality(for: settings).rawValue) requestedHDR=\(settings.hdrEnabled) sessions=\(decoder.sessionCreationCount) failed=\(decoder.failedFrameCount) errors=\(decoder.failureStatusSummary) decoderStages=\(decoder.stageTimingSummary) recovery[requests=\(keyframeRequests) control=\(controlKeyframeRequests) udp=\(udpKeyframeRequests) keyframes=\(stats.keyframesEmitted) feedback=\(bundle?.isFeedbackChannelOpen == true)] buffer=\(receiver.receiveBufferBytes) ack=\(state.frameAcksSent) pacing=\(state.pacingReportsSent) fec=\(stats.recoveredPackets) nack[requests=\(stats.nack.requestsSent) packets=\(stats.nack.packetsRequested) resent=\(stats.nack.packetsReceived)] auth=\(stats.authenticatedPackets) \(state.timingSummary)"
         onSample(NativeStreamNVSTSample(received: counters.framesEmitted, decoded: decoded, bytes: counters.bytesReceived,
             lost: stats.finalizedLossPackets, packets: stats.authenticatedPackets, resolution: decoder.decodedResolution,
             decodeMilliseconds: state.decodeP50Milliseconds, pingMilliseconds: ping >= 0 ? ping : nil,

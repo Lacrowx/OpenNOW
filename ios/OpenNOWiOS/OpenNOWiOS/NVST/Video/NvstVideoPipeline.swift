@@ -337,6 +337,18 @@ public final class NvstVideoPipeline: @unchecked Sendable {
         return counters
     }
 
+    /// Asks the seat to send lost video packets again. Called on the receive thread, and sent
+    /// from it: the request is worth a round trip of frozen video for every millisecond it waits,
+    /// and the bundle's channel writes are thread-safe. It rides the same partially reliable
+    /// control channel as the frame acks, which is where the official client puts it.
+    public func requestRetransmission(of sequences: [UInt16]) {
+        lock.lock()
+        let channel = isStopped ? nil : bundle
+        lock.unlock()
+        guard let channel, let request = NvstRtpNackRequest(missing: sequences) else { return }
+        _ = channel.sendPartiallyReliableControl(request.command)
+    }
+
     /// Called on the receive thread. Stamps the handover so queue backlog stays measurable, then
     /// gets off that thread immediately: draining the media socket must never wait for a decode.
     public func submit(_ unit: NvstAccessUnit) {

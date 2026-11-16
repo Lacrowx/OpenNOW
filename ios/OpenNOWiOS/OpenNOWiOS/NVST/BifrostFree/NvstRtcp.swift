@@ -70,55 +70,6 @@ public enum NvstRtcp {
         return writer.data
     }
 
-    /// RFC 4585 PT=205 FMT=1: Generic NACK, asking the sender to retransmit specific packets.
-    ///
-    /// We have announced `video[0].enableRtpNack:1` from the captured baseline for as long as this
-    /// client has existed and then never sent one, so every gap — however small — cost a full
-    /// keyframe instead of the handful of packets actually missing. Each FCI entry names one packet
-    /// id plus a 16-bit mask of the packets following it, so a 17-packet run needs one entry.
-    ///
-    /// `missing` is taken in RTP sequence order; entries are emitted greedily.
-    /// RFC 4585 PT=206 FMT=1 (Generic NACK) feedback packet. Duplicate sequence numbers are
-    /// collapsed, and losses beyond `maximumNackEntries` are deliberately not named — a burst
-    /// that large is what the keyframe path recovers from faster.
-    public static func genericNack(senderSSRC: UInt32, mediaSSRC: UInt32, missing: [UInt16]) -> Data? {
-        var seen = Set<UInt16>()
-        let missing = missing.filter { seen.insert($0).inserted }
-        guard !missing.isEmpty else { return nil }
-        var entries: [(pid: UInt16, blp: UInt16)] = []
-        var index = missing.startIndex
-        while index < missing.endIndex, entries.count < maximumNackEntries {
-            let pid = missing[index]
-            var blp: UInt16 = 0
-            var next = missing.index(after: index)
-            while next < missing.endIndex {
-                let delta = Int(missing[next] &- pid)
-                guard delta >= 1, delta <= 16 else { break }
-                blp |= UInt16(1) << UInt16(delta - 1)
-                next = missing.index(after: next)
-            }
-            entries.append((pid, blp))
-            index = next
-        }
-        var writer = NvstByteWriter(capacity: 12 + entries.count * 4)
-        // V=2, P=0, FMT=1 (Generic NACK).
-        writer.u8(0x81)
-        writer.u8(transportFeedbackPayloadType)
-        // Length in 32-bit words minus one: 2 SSRC words plus one word per FCI entry.
-        writer.u16BE(UInt16(2 + entries.count))
-        writer.u32BE(senderSSRC)
-        writer.u32BE(mediaSSRC)
-        for entry in entries {
-            writer.u16BE(entry.pid)
-            writer.u16BE(entry.blp)
-        }
-        return writer.data
-    }
-
-    /// A NACK naming more than this is a loss burst a keyframe recovers from faster than
-    /// retransmission would.
-    public static let maximumNackEntries = 8
-
     /// RFC 7714 §9.2 SRTCP GCM IV: salt XOR (SSRC at bytes 2..6, SRTCP index at 6..10).
     public static func srtcpGcmIV(sessionSalt: Data, ssrc: UInt32, srtcpIndex: UInt32) throws -> Data {
         guard sessionSalt.count == 12 else { throw SrtpCryptoError.invalidNonce }

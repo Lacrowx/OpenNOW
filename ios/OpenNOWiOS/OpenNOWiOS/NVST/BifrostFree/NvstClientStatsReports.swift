@@ -102,9 +102,7 @@ public struct NvstRtpStatsReport: Equatable, Sendable {
 
 /// Command `0x20a`: RTP NACK statistics, a fixed 28-byte payload emitted right after each
 /// `0x208` by the same builder when the per-stream NACK-stats flag is set. Matches telemetry
-/// blob 45. This client does not send NACKs (loss recovery rides FEC and keyframe requests), so
-/// its counters are zero — the same payload the official client sends when its receiver is not
-/// yet constructed.
+/// blob 45. The counters come from `NvstNackTracker`; they stay zero until a packet goes missing.
 public struct NvstRtpNackStatsReport: Equatable, Sendable {
     public static let commandCode = NvstControlCommandCode.rtpStatsCompact
     public static let version: UInt16 = 2

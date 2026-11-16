@@ -64,6 +64,9 @@ public final class NvstMjolnirReceiver: @unchecked Sendable {
     /// The reference chain broke. The argument is the frame the damage landed in when the receiver
     /// knows it (a hole inside a frame), nil for a finalized RTP loss whose frame is unknown.
     public var onRecoveryNeeded: (@Sendable (UInt32?) -> Void)?
+    /// These RTP sequence numbers went missing and should be requested from the seat again.
+    /// Called on the receive queue, so it must not block.
+    public var onRetransmissionWanted: (@Sendable ([UInt16]) -> Void)?
     public var onDrop: (@Sendable (NvstReceiveDrop) -> Void)?
     /// Diagnostics that would otherwise be invisible, such as a feedback timer producing nothing.
     public var onDiagnostic: (@Sendable (String) -> Void)?
@@ -244,45 +247,9 @@ public final class NvstMjolnirReceiver: @unchecked Sendable {
         return srtcpSendIndex
     }
 
-    /// Asks the seat to retransmit the packets in `first...last`, rather than the whole picture.
-    ///
-    /// The seat is told we support this (`video[0].enableRtpNack:1` rides in every ANNOUNCE), so
-    /// the only reason a two-packet gap has been costing a full 5K keyframe is that we never asked.
-    /// Returns the number of packets named, or 0 when the range is too wide to be worth repairing
-    /// packet by packet.
-    @discardableResult
-    public func requestRetransmission(firstMissing: UInt64, lastMissing: UInt64) -> Int {
-        guard let ssrc = receiver.feedbackCounters.boundSSRC, lastMissing >= firstMissing else { return 0 }
-        let span = Int(lastMissing - firstMissing) + 1
-        // Beyond a burst this size a keyframe arrives sooner than the retransmissions would.
-        guard span <= NvstRtcp.maximumNackEntries * 16 else { return 0 }
-        let missing = (firstMissing...lastMissing).map { UInt16(truncatingIfNeeded: $0) }
-        guard let nack = NvstRtcp.genericNack(senderSSRC: NvstVideoReceiver.clientSSRC,
-                                              mediaSSRC: ssrc,
-                                              missing: missing) else { return 0 }
-        guard let sealed = try? NvstSrtcp.seal(
-            rtcpPacket: nack,
-            masterKey: handoff.srtpAESKey,
-            masterSalt: handoff.srtpSalt,
-            senderSSRC: NvstVideoReceiver.clientSSRC,
-            srtcpIndex: nextSrtcpIndex()
-        ) else { return 0 }
-        send(sealed)
-        counterLock.lock()
-        nacksSent += 1
-        nackedPackets += span
-        counterLock.unlock()
-        return span
-    }
-
-    /// NACKs sent, and how many packets they named.
-    public var nackSummary: (requests: Int, packets: Int) {
-        counterLock.lock()
-        defer { counterLock.unlock() }
-        return (nacksSent, nackedPackets)
-    }
-    private var nacksSent = 0
-    private var nackedPackets = 0
+    /// Touched only on the receive queue.
+    private var diagnosticsLogged = 0
+    static let maximumLoggedDiagnostics = 300
 
     // MARK: - Receive
 
@@ -378,15 +345,20 @@ public final class NvstMjolnirReceiver: @unchecked Sendable {
                 let handler = onAccessUnit
                 callbackLock.unlock()
                 handler?(unit)
+            case .retransmissionWanted(let sequences):
+                logLossDiagnostic("mjolnir asked the seat to resend \(sequences.count) packets from \(sequences[0])")
+                callbackLock.lock()
+                let handler = onRetransmissionWanted
+                callbackLock.unlock()
+                handler?(sequences)
             case .recoveryNeeded(let firstMissing, let lastMissing):
-                // Ask for the packets, but never rely on it: NACK repair on this path is unproven
-                // (every NACK before 2026-08-27 was sealed with SRTCP index 0 and discarded by the
-                // seat's replay window after the first, so "small gaps ride on the NACK alone" was
-                // never actually exercised). The keyframe request is the recovery that is known to
-                // work; the NACK stays as a best-effort repair that can only make the keyframe wait
-                // shorter, and recovery events are rare enough (~0.1/s measured) that the keyframe
-                // cost is noise.
-                requestRetransmission(firstMissing: firstMissing, lastMissing: lastMissing)
+                // Retransmission was already asked for and has run out of time (or the hole was
+                // too wide to ask for), so the reference chain is broken: only a keyframe mends
+                // it now. The frames handed over with this event are the ones the gap held back.
+                if onDiagnostic != nil {
+                    let released = events.reduce(0) { if case .frame = $1 { $0 + 1 } else { $0 } }
+                    logLossDiagnostic("mjolnir gave up on packets \(firstMissing)...\(lastMissing); \(released) frames were waiting behind them")
+                }
                 callbackLock.lock()
                 let handler = onRecoveryNeeded
                 callbackLock.unlock()
@@ -400,12 +372,26 @@ public final class NvstMjolnirReceiver: @unchecked Sendable {
                 callbackLock.unlock()
                 handler?(frameIndex)
             case .dropped(let reason):
+                // A resent packet that arrives after its gap was given up shows up here.
+                switch reason {
+                case .staleSequence, .duplicateSequence, .replayed:
+                    logLossDiagnostic("mjolnir discarded an arrival: \(reason.description)")
+                default: break
+                }
                 callbackLock.lock()
                 let handler = onDrop
                 callbackLock.unlock()
                 handler?(reason)
             }
         }
+    }
+
+    /// Loss events are rare, but a misbehaving path could produce one per packet, so the lines
+    /// that describe them are capped for the session.
+    private func logLossDiagnostic(_ message: @autoclosure () -> String) {
+        guard let onDiagnostic, diagnosticsLogged < Self.maximumLoggedDiagnostics else { return }
+        diagnosticsLogged += 1
+        onDiagnostic(message())
     }
 
     // MARK: - Round trip
@@ -648,5 +634,6 @@ extension NvstMjolnirReceiver {
         let elapsed = DispatchTime.now().uptimeNanoseconds
         guard elapsed > sentAt else { return }
         lastRoundTripMilliseconds = Double(elapsed - sentAt) / 1_000_000
+        receiver.updateRoundTrip(milliseconds: lastRoundTripMilliseconds)
     }
 }

@@ -51,8 +51,9 @@ struct NvstMjolnirFeedbackTests {
         let receiver = try NvstVideoReceiver(handoff: handoff)
         let sof = try NvstReceiverFixtures.seal(NvstReceiverFixtures.packet(sequence: 1, frameIndex: 1, flags: 0x05, media: [0x00, 0x00, 0x00, 0x01, 0x65]), sequence: 1, handoff: handoff)
         #expect(NvstReceiverFixtures.frames(receiver.process(datagram: sof)).isEmpty)
-        // Jump far past the window: the reference chain is broken.
-        let far = try NvstReceiverFixtures.seal(NvstReceiverFixtures.packet(sequence: 40, frameIndex: 2, flags: 0x01, media: [0xaa]), sequence: 40, handoff: handoff)
+        // Jump far past the window, and past what is worth asking the seat to resend packet by
+        // packet: the reference chain is broken.
+        let far = try NvstReceiverFixtures.seal(NvstReceiverFixtures.packet(sequence: 400, frameIndex: 2, flags: 0x01, media: [0xaa]), sequence: 400, handoff: handoff)
         let events = receiver.process(datagram: far)
         #expect(NvstReceiverFixtures.recoveries(events) == 1)
         #expect(NvstReceiverFixtures.frames(events).isEmpty)
@@ -153,6 +154,67 @@ struct NvstMjolnirFeedbackTests {
         let events = receiver.process(datagram: try NvstReceiverFixtures.seal(repair, sequence: 1, handoff: handoff))
         #expect(NvstReceiverFixtures.frames(events).isEmpty)
         #expect(receiver.snapshot.fecPackets == 1)
+    }
+
+    /// Feeds whole frames of 4 picture + 1 repair packet until error correction has proven itself
+    /// on the stream, and returns the next free RTP sequence number and frame index.
+    private func armFec(_ receiver: NvstVideoReceiver, handoff: NVSTVideoHandoff) throws -> (sequence: UInt16, frame: UInt32) {
+        var sequence: UInt16 = 1
+        for frame in UInt32(1)...6 {
+            for packet in NvstReceiverFixtures.fecFrame(firstSequence: sequence, frameIndex: frame) {
+                _ = receiver.process(datagram: try NvstReceiverFixtures.seal(packet, sequence: sequence, handoff: handoff))
+                sequence += 1
+            }
+        }
+        #expect(receiver.fecFindings.isArmed)
+        return (sequence, 7)
+    }
+
+    /// A gap used to be held for 1200 packets whenever error correction was on. A stream of small
+    /// frames sends about 1000 packets a second, so one lost repair packet — which carries no
+    /// picture at all — froze the video for over a second, and the backlog was then thrown away.
+    /// The frames here are 100 ms apart, so the wait for a retransmission (see `NvstNackTests`)
+    /// is over as well and only the error-correction rule decides.
+    @Test func aLostRepairPacketDoesNotHoldBackTheFramesBehindIt() throws {
+        let handoff = NvstReceiverFixtures.makeHandoff(reorderWindow: 8)
+        let receiver = try NvstVideoReceiver(handoff: handoff)
+        var (sequence, frame) = try armFec(receiver, handoff: handoff)
+
+        var delivered: [UInt32] = []
+        for offset in 0..<3 {
+            let packets = NvstReceiverFixtures.fecFrame(firstSequence: sequence, frameIndex: frame)
+            for (position, packet) in packets.enumerated() {
+                defer { sequence += 1 }
+                // The first of these frames loses its repair packet, the last one in the frame.
+                if offset == 0, position == packets.count - 1 { continue }
+                let events = receiver.process(datagram: try NvstReceiverFixtures.seal(packet, sequence: sequence, handoff: handoff),
+                                              now: UInt64(offset) * 100_000_000)
+                delivered += NvstReceiverFixtures.frames(events).map(\.frameIndex)
+            }
+            frame += 1
+        }
+        // Two frames (ten packets) after the loss, everything that arrived has been delivered.
+        #expect(delivered == [7, 8, 9])
+        #expect(receiver.snapshot.finalizedLossPackets == 1)
+    }
+
+    /// The reason a gap may outlive the plain reorder window at all: a frame's repair packets
+    /// follow all of its picture packets, so an early hole in a long frame is repaired late.
+    @Test func aHoleInALongFrameStillWaitsForThatFramesRepairPackets() throws {
+        let handoff = NvstReceiverFixtures.makeHandoff(reorderWindow: 8)
+        let receiver = try NvstVideoReceiver(handoff: handoff)
+        let (sequence, frame) = try armFec(receiver, handoff: handoff)
+
+        var events: [NvstReceiveEvent] = []
+        let packets = NvstReceiverFixtures.fecFrame(firstSequence: sequence, frameIndex: frame, sourceCount: 20)
+        for (position, packet) in packets.enumerated() where position != 2 {
+            let packetSequence = sequence + UInt16(position)
+            events += receiver.process(datagram: try NvstReceiverFixtures.seal(packet, sequence: packetSequence, handoff: handoff))
+        }
+        #expect(NvstReceiverFixtures.frames(events).map(\.frameIndex) == [7])
+        #expect(NvstReceiverFixtures.recoveries(events) == 0)
+        #expect(receiver.snapshot.recoveredPackets == 1)
+        #expect(receiver.snapshot.finalizedLossPackets == 0)
     }
 
     @Test func srtcpReceiverReportsWaitForTheMediaSsrcThenRespectTheInterval() throws {

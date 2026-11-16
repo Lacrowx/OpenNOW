@@ -83,6 +83,7 @@
 		9EB18CFD52ED20D286611817 /* NVST/BifrostFree/NvstControlCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2F2262DC8631F35B89E8291 /* NVST/BifrostFree/NvstControlCommand.swift */; };
 		9F2829C99927C63A6290B595 /* NVST/BifrostFree/NvstHidPassthrough.swift in Sources */ = {isa = PBXBuildFile; fileRef = 034B974A326598B9BDBEA109 /* NVST/BifrostFree/NvstHidPassthrough.swift */; };
 		A1DE323895E8B8A345FFE075 /* NVST/NvstRtspNegotiationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31B1664E609E0406913114BE /* NVST/NvstRtspNegotiationTests.swift */; };
+		A1C7E05D4B9F23186D7A5C05 /* NVST/NvstNackTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C7E05D4B9F23186D7A5C06 /* NVST/NvstNackTests.swift */; };
 		A2443FF9F3775B80EB97B4AB /* NVST/BifrostFree/NvstRtcp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6ED81602A8350EFED6324A22 /* NVST/BifrostFree/NvstRtcp.swift */; };
 		A26000000000000000000001 /* OpenNOWVisualComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A26000000000000000000011 /* OpenNOWVisualComponents.swift */; };
 		A26000000000000000000002 /* QueueVisualComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = A26000000000000000000012 /* QueueVisualComponents.swift */; };
@@ -93,6 +94,8 @@
 		AB533C6016ED0CD4950FCE46 /* NVST/Video/NvstVideoToolboxDecoder+Format.swift in Sources */ = {isa = PBXBuildFile; fileRef = E20868A10E9ADC61B9BFEF85 /* NVST/Video/NvstVideoToolboxDecoder+Format.swift */; };
 		AC0000000000000000000001 /* AccountStateSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = AC0000000000000000000011 /* AccountStateSupport.swift */; };
 		AFFF496F2ECD27F7FD11CFF6 /* NVST/BifrostFree/NvstFecRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF0B7C1584EC19A88CAA50C0 /* NVST/BifrostFree/NvstFecRecovery.swift */; };
+		A1C7E05D4B9F23186D7A5C03 /* NVST/BifrostFree/NvstRtpNackRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C7E05D4B9F23186D7A5C04 /* NVST/BifrostFree/NvstRtpNackRequest.swift */; };
+		A1C7E05D4B9F23186D7A5C01 /* NVST/BifrostFree/NvstNackTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1C7E05D4B9F23186D7A5C02 /* NVST/BifrostFree/NvstNackTracker.swift */; };
 		B355E5F5078087994BD5421D /* NVST/Rtsp/NvstRtspWireFormat.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5A01981C89B6C2CDE9229B6 /* NVST/Rtsp/NvstRtspWireFormat.swift */; };
 		B805EE9E620245D5E643F222 /* NVST/BifrostFree/NvstHdrModeNotification.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06B75AEE7FCDFBB5FF88965E /* NVST/BifrostFree/NvstHdrModeNotification.swift */; };
 		B813C9EDF435928D2B0D558E /* NVST/BifrostFree/NvstVsyncMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7FFF17B34CA403A98F15A53A /* NVST/BifrostFree/NvstVsyncMode.swift */; };
@@ -252,6 +255,7 @@
 		2CB5A80164442E5D7230403E /* NVST/Native/NvstOpusEncoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/Native/NvstOpusEncoder.swift; sourceTree = "<group>"; };
 		2EA450EB7F51F2A851106C9E /* NVST/Native/NvstCoreAudioDevice.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/Native/NvstCoreAudioDevice.swift; sourceTree = "<group>"; };
 		31B1664E609E0406913114BE /* NVST/NvstRtspNegotiationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/NvstRtspNegotiationTests.swift; sourceTree = "<group>"; };
+		A1C7E05D4B9F23186D7A5C06 /* NVST/NvstNackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/NvstNackTests.swift; sourceTree = "<group>"; };
 		3EC3BA55B1DD22815AFE6595 /* NVST/BifrostFree/NvstQosReport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/BifrostFree/NvstQosReport.swift; sourceTree = "<group>"; };
 		4012C0BC830A6B966E9F5F7C /* NVST/BifrostFree/NvstClientStatsReports.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/BifrostFree/NvstClientStatsReports.swift; sourceTree = "<group>"; };
 		4915EE7F1B790BC6DC568358 /* NVST/Native/NvstBundleDatagramDemux.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/Native/NvstBundleDatagramDemux.swift; sourceTree = "<group>"; };
@@ -326,6 +330,8 @@
 		BB0000000000000000000071 /* NativeStreamMetal4Effects.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeStreamMetal4Effects.swift; sourceTree = "<group>"; };
 		BD77B1C1BF6DD89CFD2AEED1 /* NVST/Native/NvstAudioSrtp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/Native/NvstAudioSrtp.swift; sourceTree = "<group>"; };
 		BF0B7C1584EC19A88CAA50C0 /* NVST/BifrostFree/NvstFecRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/BifrostFree/NvstFecRecovery.swift; sourceTree = "<group>"; };
+		A1C7E05D4B9F23186D7A5C04 /* NVST/BifrostFree/NvstRtpNackRequest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/BifrostFree/NvstRtpNackRequest.swift; sourceTree = "<group>"; };
+		A1C7E05D4B9F23186D7A5C02 /* NVST/BifrostFree/NvstNackTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/BifrostFree/NvstNackTracker.swift; sourceTree = "<group>"; };
 		BF602EA1198F77A11775DDDC /* NVST/Rtsp/NvstRtspEndpoints.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/Rtsp/NvstRtspEndpoints.swift; sourceTree = "<group>"; };
 		C10B5618FA829A28A31EAA7E /* NVST/BifrostFree/NvstByteCodec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/BifrostFree/NvstByteCodec.swift; sourceTree = "<group>"; };
 		C5A01981C89B6C2CDE9229B6 /* NVST/Rtsp/NvstRtspWireFormat.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/Rtsp/NvstRtspWireFormat.swift; sourceTree = "<group>"; };
@@ -432,6 +438,8 @@
 				B13268A3E71A245315D4991B /* NVST/BifrostFree/NvstDatagram.swift */,
 				89D89109EFA379533B1298F9 /* NVST/BifrostFree/NvstElementaryStream.swift */,
 				BF0B7C1584EC19A88CAA50C0 /* NVST/BifrostFree/NvstFecRecovery.swift */,
+				A1C7E05D4B9F23186D7A5C04 /* NVST/BifrostFree/NvstRtpNackRequest.swift */,
+				A1C7E05D4B9F23186D7A5C02 /* NVST/BifrostFree/NvstNackTracker.swift */,
 				1A138D5D882DD5F068263409 /* NVST/BifrostFree/NvstFeedbackSender.swift */,
 				7091EFD56187E0E570EF1C7D /* NVST/BifrostFree/NvstFrameAck.swift */,
 				176AEDBDF45A657204A9808C /* NVST/BifrostFree/NvstFramePacingReport.swift */,
@@ -590,6 +598,7 @@
 			children = (
 				87BA6AF68B333ABDC69BBF02 /* NVST/NvstVideoPacketTests.swift */,
 				1613FFECCDBE846C085AC5D2 /* NVST/NvstRtspNegotiatorTests.swift */,
+				A1C7E05D4B9F23186D7A5C06 /* NVST/NvstNackTests.swift */,
 				31B1664E609E0406913114BE /* NVST/NvstRtspNegotiationTests.swift */,
 				B4433A2CA54411B0DC2E59D4 /* NVST/NvstAv1ObuTests.swift */,
 				6D5F9061351158BB86A314C0 /* NVST/NvstStunHolePunchTests.swift */,
@@ -754,6 +763,8 @@
 				4610EB8AD4768A05BC533477 /* NVST/BifrostFree/NvstDatagram.swift in Sources */,
 				1A9619910BC03FFD8FD7575F /* NVST/BifrostFree/NvstElementaryStream.swift in Sources */,
 				AFFF496F2ECD27F7FD11CFF6 /* NVST/BifrostFree/NvstFecRecovery.swift in Sources */,
+				A1C7E05D4B9F23186D7A5C03 /* NVST/BifrostFree/NvstRtpNackRequest.swift in Sources */,
+				A1C7E05D4B9F23186D7A5C01 /* NVST/BifrostFree/NvstNackTracker.swift in Sources */,
 				48A5A815C6D2CC012CE6B580 /* NVST/BifrostFree/NvstFeedbackSender.swift in Sources */,
 				506AEDD7FBA7295D1628CBEC /* NVST/BifrostFree/NvstFrameAck.swift in Sources */,
 				6FE13160DDC37B439291F8E2 /* NVST/BifrostFree/NvstFramePacingReport.swift in Sources */,
@@ -886,6 +897,7 @@
 			files = (
 				DCB6E15A6553D49039CDF051 /* NVST/NvstVideoPacketTests.swift in Sources */,
 				D305859AD8A18424F47FD0A9 /* NVST/NvstRtspNegotiatorTests.swift in Sources */,
+				A1C7E05D4B9F23186D7A5C05 /* NVST/NvstNackTests.swift in Sources */,
 				A1DE323895E8B8A345FFE075 /* NVST/NvstRtspNegotiationTests.swift in Sources */,
 				6DF9FD408D2EBE853D9CE4C9 /* NVST/NvstAv1ObuTests.swift in Sources */,
 				C2B0D88E0E373B7C19B6A48A /* NVST/NvstStunHolePunchTests.swift in Sources */,

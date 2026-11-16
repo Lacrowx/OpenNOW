@@ -62,6 +62,30 @@ enum NvstReceiverFixtures {
                                          media: media, fecWord: fecWord, streamSequence: streamSequence)
     }
 
+    /// One frame as the seat sends it with error correction on: `sourceCount` picture packets,
+    /// then the Reed-Solomon repair packets for them, in wire order. RTP sequence numbers run on
+    /// from `firstSequence`.
+    static func fecFrame(firstSequence: UInt16, frameIndex: UInt32, sourceCount: Int = 4, percentage: UInt32 = 25) -> [Data] {
+        let repairCount = (sourceCount * Int(percentage) + 99) / 100
+        func fecWord(_ index: Int) -> UInt32 { percentage << 4 | UInt32(index) << 12 | UInt32(sourceCount) << 22 }
+        let sources = (0..<sourceCount).map { index -> Data in
+            var flags = NvstVideoPacketTests.containsPicData
+            if index == 0 { flags |= NvstVideoPacketTests.startOfFrame }
+            if index == sourceCount - 1 { flags |= NvstVideoPacketTests.endOfFrame }
+            let media: [UInt8] = index == 0 ? [0x00, 0x00, 0x00, 0x01, 0x65] : [UInt8](repeating: UInt8(index), count: 5)
+            return packet(sequence: firstSequence + UInt16(index), frameIndex: frameIndex, flags: flags,
+                          media: media, fecWord: fecWord(index))
+        }
+        let size = sources[0].count
+        let parity = NvstReedSolomon.encode(data: sources.map { [UInt8]($0) }, parityCount: repairCount, size: size)!
+        let repairs = parity.enumerated().map { offset, shard in
+            // The seat puts real transport headers on a repair packet; only the payload is parity.
+            packet(sequence: firstSequence + UInt16(sourceCount + offset), frameIndex: frameIndex, flags: 0,
+                   media: Array(shard[32...]), fecWord: fecWord(sourceCount + offset))
+        }
+        return sources + repairs
+    }
+
     static func frames(_ events: [NvstReceiveEvent]) -> [NvstAccessUnit] {
         events.compactMap { if case .frame(let unit) = $0 { return unit } else { return nil } }
     }
