@@ -13,8 +13,8 @@ configFiles:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    MARKETING_VERSION: "1.1.190"
-    CURRENT_PROJECT_VERSION: "1"
+    MARKETING_VERSION: "1.1.191"
+    CURRENT_PROJECT_VERSION: "2"
     CODE_SIGN_STYLE: Automatic
     # Project-wide: the test bundle rebuilds the OpenSSL module when it imports the app.
     HEADER_SEARCH_PATHS:
