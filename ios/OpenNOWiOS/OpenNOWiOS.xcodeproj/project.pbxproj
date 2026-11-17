@@ -36,6 +36,7 @@
 		1A9619910BC03FFD8FD7575F /* NVST/BifrostFree/NvstElementaryStream.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89D89109EFA379533B1298F9 /* NVST/BifrostFree/NvstElementaryStream.swift */; };
 		1A97123863197E3389607A50 /* NVST/Native/NvstDtlsTransport.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AB522EDF936087417B4B8C6 /* NVST/Native/NvstDtlsTransport.swift */; };
 		1C033AB2F10A5D11955D41E7 /* NVST/Native/NvstAudioSrtp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD77B1C1BF6DD89CFD2AEED1 /* NVST/Native/NvstAudioSrtp.swift */; };
+		298DDFF0B5399C89782B72F0 /* NVST/Native/NvstAudioPlacement.swift in Sources */ = {isa = PBXBuildFile; fileRef = B0B97171FAB1D2D414F2EF3E /* NVST/Native/NvstAudioPlacement.swift */; };
 		1C4B780762999E5576F5F9A1 /* NVST/Native/NvstAudioReceivePipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = AFE20EED4BFC45C3EDA8E6BF /* NVST/Native/NvstAudioReceivePipeline.swift */; };
 		1FE5F919752F0F94C2E5DA80 /* usrsctp.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = B4A2274E6D3DDECCDCF5C1CA /* usrsctp.xcframework */; };
 		22D0B32C8458038A33A4ACE0 /* NVST/SrtpCryptographyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A86B38681CD9438F1BC8C253 /* NVST/SrtpCryptographyTests.swift */; };
@@ -138,6 +139,7 @@
 		CC0000000000000000000007 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = CC0000000000000000000017 /* Assets.xcassets */; };
 		CC8788EDE2AFD6C637BDA897 /* NVST/BifrostFree/NvstAnnexB.swift in Sources */ = {isa = PBXBuildFile; fileRef = D25073CC313C89A817BDDB42 /* NVST/BifrostFree/NvstAnnexB.swift */; };
 		CEEF4B6B963B36937F1A7E17 /* NVST/Native/NvstAudioSendPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = F4E213C546018D253281F041 /* NVST/Native/NvstAudioSendPipeline.swift */; };
+		559A66B368FF66027DD4BCE8 /* NVST/Native/NvstAudioChannelMeter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 26EA59677795EAACBAD8EDB2 /* NVST/Native/NvstAudioChannelMeter.swift */; };
 		D1C36E31C25060FC9A9E34F8 /* NVST/Native/NvstAudioJitterBuffer.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8DDDAAAA76FF39164F42DD9 /* NVST/Native/NvstAudioJitterBuffer.swift */; };
 		D305859AD8A18424F47FD0A9 /* NVST/NvstRtspNegotiatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1613FFECCDBE846C085AC5D2 /* NVST/NvstRtspNegotiatorTests.swift */; };
 		D38BA2B53328BC60F6A40A53 /* NVST/Rtsp/NvstRtspSdp.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEC3B9B3CE53146BD3701B45 /* NVST/Rtsp/NvstRtspSdp.swift */; };
@@ -161,6 +163,7 @@
 		DE000000000000000000000D /* DebugLogView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE000000000000000000001D /* DebugLogView.swift */; };
 		DE000000000000000000000E /* OpenNOWFailure.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE000000000000000000001E /* OpenNOWFailure.swift */; };
 		E162081677B89815538C5BE6 /* NativeStreamPresentation.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5AED86C88ABC9CF127D2EC2 /* NativeStreamPresentation.swift */; };
+		D2B18A7B7496B8F104BE8B8E /* NVST/BifrostFree/NvstAudioLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 25830D5CC3DD6713F769A875 /* NVST/BifrostFree/NvstAudioLayout.swift */; };
 		E2D6635C23ABFEB1341C19DD /* NVST/BifrostFree/NvstAudioSurroundInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E6FADCAF110F3487476F693 /* NVST/BifrostFree/NvstAudioSurroundInfo.swift */; };
 		E82AD1682E1AFFD0AA0F7483 /* NVST/Video/NvstVideoPipeline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7B62FEDA51469723C4811310 /* NVST/Video/NvstVideoPipeline.swift */; };
 		EE0000000000000000000001 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = EE0000000000000000000011 /* PrivacyInfo.xcprivacy */; };
@@ -293,6 +296,7 @@
 		9463843B81ECE4FEE66E4F6B /* NVST/BifrostFree/NvstSrtcp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/BifrostFree/NvstSrtcp.swift; sourceTree = "<group>"; };
 		9730BA964731A6D8DC01CE40 /* NativeStreamNVSTInput.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeStreamNVSTInput.swift; sourceTree = "<group>"; };
 		9AB522EDF936087417B4B8C6 /* NVST/Native/NvstDtlsTransport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/Native/NvstDtlsTransport.swift; sourceTree = "<group>"; };
+		25830D5CC3DD6713F769A875 /* NVST/BifrostFree/NvstAudioLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/BifrostFree/NvstAudioLayout.swift; sourceTree = "<group>"; };
 		9E6FADCAF110F3487476F693 /* NVST/BifrostFree/NvstAudioSurroundInfo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/BifrostFree/NvstAudioSurroundInfo.swift; sourceTree = "<group>"; };
 		A069F9F629064E25EDB36A88 /* NVST/NvstReceiverFixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/NvstReceiverFixtures.swift; sourceTree = "<group>"; };
 		A26000000000000000000011 /* OpenNOWVisualComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenNOWVisualComponents.swift; sourceTree = "<group>"; };
@@ -306,6 +310,7 @@
 		AC0000000000000000000011 /* AccountStateSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccountStateSupport.swift; sourceTree = "<group>"; };
 		AC4088A9FEBFF97FD9CC5F34 /* NVST/NvstMjolnirFeedbackTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/NvstMjolnirFeedbackTests.swift; sourceTree = "<group>"; };
 		ADD77A18156110AE7EA4AE20 /* NVST/BifrostFree/NvstRemoteCursor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/BifrostFree/NvstRemoteCursor.swift; sourceTree = "<group>"; };
+		B0B97171FAB1D2D414F2EF3E /* NVST/Native/NvstAudioPlacement.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/Native/NvstAudioPlacement.swift; sourceTree = "<group>"; };
 		AFE20EED4BFC45C3EDA8E6BF /* NVST/Native/NvstAudioReceivePipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/Native/NvstAudioReceivePipeline.swift; sourceTree = "<group>"; };
 		B077A38C81C6BC6E59A0A997 /* NativeStreamNVSTConfiguration.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NativeStreamNVSTConfiguration.swift; sourceTree = "<group>"; };
 		B13268A3E71A245315D4991B /* NVST/BifrostFree/NvstDatagram.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/BifrostFree/NvstDatagram.swift; sourceTree = "<group>"; };
@@ -379,6 +384,7 @@
 		F10000000000000000000012 /* OpenNOWiOSTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OpenNOWiOSTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F1B8223C29C059220609FCB2 /* NVST/BifrostFree/NvstInboundCounters.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/BifrostFree/NvstInboundCounters.swift; sourceTree = "<group>"; };
 		F4E213C546018D253281F041 /* NVST/Native/NvstAudioSendPipeline.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/Native/NvstAudioSendPipeline.swift; sourceTree = "<group>"; };
+		26EA59677795EAACBAD8EDB2 /* NVST/Native/NvstAudioChannelMeter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/Native/NvstAudioChannelMeter.swift; sourceTree = "<group>"; };
 		F8DDDAAAA76FF39164F42DD9 /* NVST/Native/NvstAudioJitterBuffer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NVST/Native/NvstAudioJitterBuffer.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
@@ -431,6 +437,7 @@
 				B077A38C81C6BC6E59A0A997 /* NativeStreamNVSTConfiguration.swift */,
 				E8EB51AE2654616A0453827E /* NVST/BifrostFree/GeronimoInputProtocol.swift */,
 				D25073CC313C89A817BDDB42 /* NVST/BifrostFree/NvstAnnexB.swift */,
+				25830D5CC3DD6713F769A875 /* NVST/BifrostFree/NvstAudioLayout.swift */,
 				9E6FADCAF110F3487476F693 /* NVST/BifrostFree/NvstAudioSurroundInfo.swift */,
 				90E8D5566B33255FCB6CBBEF /* NVST/BifrostFree/NvstAv1Obu.swift */,
 				5CBCA5BA8106302557EEF25E /* NVST/BifrostFree/NvstBundleIceProbe.swift */,
@@ -470,7 +477,9 @@
 				7FFF17B34CA403A98F15A53A /* NVST/BifrostFree/NvstVsyncMode.swift */,
 				0A291A1FE9918D8324AD221E /* NVST/BifrostFree/SrtpCryptography.swift */,
 				E7608039FC35D8B039F1AE55 /* NVST/Handoff/NVSTVideoHandoff.swift */,
+				26EA59677795EAACBAD8EDB2 /* NVST/Native/NvstAudioChannelMeter.swift */,
 				F8DDDAAAA76FF39164F42DD9 /* NVST/Native/NvstAudioJitterBuffer.swift */,
+				B0B97171FAB1D2D414F2EF3E /* NVST/Native/NvstAudioPlacement.swift */,
 				AFE20EED4BFC45C3EDA8E6BF /* NVST/Native/NvstAudioReceivePipeline.swift */,
 				8B87DC408E29D6510AE2DB15 /* NVST/Native/NvstAudioRtp.swift */,
 				F4E213C546018D253281F041 /* NVST/Native/NvstAudioSendPipeline.swift */,
@@ -757,6 +766,7 @@
 				39C10CC1F62415F05F8FE3BC /* NativeStreamNVSTConfiguration.swift in Sources */,
 				04937EADD6D6B625A79E37F9 /* NVST/BifrostFree/GeronimoInputProtocol.swift in Sources */,
 				CC8788EDE2AFD6C637BDA897 /* NVST/BifrostFree/NvstAnnexB.swift in Sources */,
+				D2B18A7B7496B8F104BE8B8E /* NVST/BifrostFree/NvstAudioLayout.swift in Sources */,
 				E2D6635C23ABFEB1341C19DD /* NVST/BifrostFree/NvstAudioSurroundInfo.swift in Sources */,
 				DAB597A25E727C0DD85F20C3 /* NVST/BifrostFree/NvstAv1Obu.swift in Sources */,
 				F964DD4FE2590801E3472915 /* NVST/BifrostFree/NvstBundleIceProbe.swift in Sources */,
@@ -796,7 +806,9 @@
 				B813C9EDF435928D2B0D558E /* NVST/BifrostFree/NvstVsyncMode.swift in Sources */,
 				05208217F7BD1A10797A06BE /* NVST/BifrostFree/SrtpCryptography.swift in Sources */,
 				87837026AB2C3C8651C899B6 /* NVST/Handoff/NVSTVideoHandoff.swift in Sources */,
+				559A66B368FF66027DD4BCE8 /* NVST/Native/NvstAudioChannelMeter.swift in Sources */,
 				D1C36E31C25060FC9A9E34F8 /* NVST/Native/NvstAudioJitterBuffer.swift in Sources */,
+				298DDFF0B5399C89782B72F0 /* NVST/Native/NvstAudioPlacement.swift in Sources */,
 				1C4B780762999E5576F5F9A1 /* NVST/Native/NvstAudioReceivePipeline.swift in Sources */,
 				394C2E67B4CD695476AE137D /* NVST/Native/NvstAudioRtp.swift in Sources */,
 				CEEF4B6B963B36937F1A7E17 /* NVST/Native/NvstAudioSendPipeline.swift in Sources */,
