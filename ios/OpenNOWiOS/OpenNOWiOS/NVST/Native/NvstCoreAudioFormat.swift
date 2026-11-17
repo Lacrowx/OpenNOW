@@ -70,7 +70,7 @@ public enum NvstCoreAudioFormat {
         return output
     }
 
-    private static func clamped16(_ value: Float) -> Int16 {
+    static func clamped16(_ value: Float) -> Int16 {
         let bounded: Float = value.isFinite ? value : (value > 0 ? 1 : (value < 0 ? -1 : 0))
         let scaled = bounded * Float(Int16.max)
         if scaled <= Float(Int16.min) { return Int16.min }
