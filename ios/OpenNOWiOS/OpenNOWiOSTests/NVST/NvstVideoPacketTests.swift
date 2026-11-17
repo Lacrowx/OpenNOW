@@ -223,6 +223,88 @@ struct NvstVideoPacketTests {
         #expect(sample == Data([0x00, 0x00, 0x00, 0x05] + first + [0x00, 0x00, 0x00, 0x05] + second))
     }
 
+    /// The Annex-B rule `prepare` implements, written for clarity rather than speed: a unit is
+    /// what lies between one `00 00 01` and the next, less its trailing zero bytes; a unit that
+    /// is empty after that is no unit. Returns what `prepare` should make of it for H.264.
+    static func referencePrepare(_ bytes: [UInt8]) -> (sample: [UInt8], sps: [[UInt8]], pps: [[UInt8]]) {
+        var starts: [Int] = []
+        var index = 0
+        while index + 2 < bytes.count {
+            if bytes[index] == 0, bytes[index + 1] == 0, bytes[index + 2] == 1 {
+                starts.append(index)
+                index += 3
+            } else {
+                index += 1
+            }
+        }
+        var result: (sample: [UInt8], sps: [[UInt8]], pps: [[UInt8]]) = ([], [], [])
+        for (position, start) in starts.enumerated() {
+            let end = position + 1 < starts.count ? starts[position + 1] : bytes.count
+            var unit = Array(bytes[(start + 3)..<end])
+            while unit.last == 0 { unit.removeLast() }
+            guard let header = unit.first else { continue }
+            switch header & 0x1f {
+            case 7: result.sps.append(unit)
+            case 8: result.pps.append(unit)
+            case 9, 12: break
+            default:
+                let length = UInt32(unit.count)
+                result.sample += [UInt8(length >> 24), UInt8((length >> 16) & 0xff), UInt8((length >> 8) & 0xff), UInt8(length & 0xff)] + unit
+            }
+        }
+        return result
+    }
+
+    /// Short buffers dense in the bytes a start code is made of, so every way two start codes
+    /// can touch, overlap a buffer edge or sit in padding comes up many times.
+    @Test func annexBConversionMatchesTheReferenceOnStartCodeDenseBuffers() {
+        var state: UInt64 = 0x9e37_79b9_7f4a_7c15
+        func next() -> UInt64 {
+            state &+= 0x9e37_79b9_7f4a_7c15
+            var z = state
+            z = (z ^ (z >> 30)) &* 0xbf58_476d_1ce4_e5b9
+            z = (z ^ (z >> 27)) &* 0x94d0_49bb_1331_11eb
+            return z ^ (z >> 31)
+        }
+        for _ in 0..<20_000 {
+            let length = Int(next() % 48)
+            let bytes: [UInt8] = (0..<length).map { _ in
+                switch next() % 10 {
+                case 0..<5: 0x00
+                case 5..<7: 0x01
+                default: UInt8(truncatingIfNeeded: next())
+                }
+            }
+            let expected = Self.referencePrepare(bytes)
+            let prepared = NvstElementaryStream.prepare(Data(bytes), codec: .h264)
+            guard [UInt8](prepared.sample) == expected.sample,
+                  prepared.parameterSets.sequenceParameterSets.map({ [UInt8]($0) }) == expected.sps,
+                  prepared.parameterSets.pictureParameterSets.map({ [UInt8]($0) }) == expected.pps else {
+                Issue.record("prepare differs from the reference for \(bytes.map { String(format: "%02x", $0) }.joined(separator: " "))")
+                return
+            }
+        }
+    }
+
+    /// The shape of a real frame: four slices of tens of kilobytes, start codes far apart.
+    @Test func annexBConversionMatchesTheReferenceOnAFrameSizedAccessUnit() {
+        var bytes: [UInt8] = []
+        var seed: UInt32 = 12345
+        for slice in 0..<4 {
+            bytes += slice == 0 ? [0x00, 0x00, 0x00, 0x01] : [0x00, 0x00, 0x01]
+            bytes.append(0x41)
+            for _ in 0..<15_000 {
+                seed = seed &* 1_664_525 &+ 1_013_904_223
+                bytes.append(UInt8(truncatingIfNeeded: seed >> 16))
+            }
+            bytes.append(0x80)
+        }
+        let expected = Self.referencePrepare(bytes)
+        let prepared = NvstElementaryStream.prepare(Data(bytes), codec: .h264)
+        #expect([UInt8](prepared.sample) == expected.sample)
+        #expect(prepared.parameterSets.sequenceParameterSets.isEmpty)
+    }
+
     @Test func aStartPacketWithoutNearbyAnnexBVideoIsDropped() throws {
         let assembler = NvstFrameReassembler()
         let noise = [UInt8](repeating: 0x81, count: NvstAnnexB.maxPictureHeaderBytes + 8)

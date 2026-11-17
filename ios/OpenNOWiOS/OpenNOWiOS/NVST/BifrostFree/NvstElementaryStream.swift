@@ -149,29 +149,31 @@ public enum NvstElementaryStream {
     /// is therefore no unit at all. The seat does send them — a 261-byte frame with five zeros
     /// after its first start code, seen twice on 2026-11-16 — and handing that two-byte "unit" to
     /// VideoToolbox as picture data got the whole frame rejected with -12909.
+    ///
+    /// Every start code ends in 0x01, a byte coded picture data holds about once in 256, so the
+    /// search goes from one 0x01 to the next with `memchr` and looks behind it for the two
+    /// zeros. The fourth byte of a four-byte start code is then just one more padding zero.
+    /// Testing three bytes at every offset instead cost 0.5–0.6 ms per 31 kB frame in a Debug
+    /// build on an Apple TV 4K, on the decode queue; the whole conversion now takes 0.01 ms
+    /// there (measured 2026-11-17).
     private static func forEachNalUnit(base: UnsafePointer<UInt8>, count: Int, _ visit: (Int, Int) -> Void) {
-        func body(_ start: Int, _ length: Int) {
-            var end = start + length
+        func body(_ start: Int, _ limit: Int) {
+            var end = limit
             while end > start, base[end - 1] == 0 { end -= 1 }
             if end > start { visit(start, end - start) }
         }
-        guard count >= 3 else { return }
-        var cursor = 0
         var currentStart: Int?
-        while cursor <= count - 3 {
-            let isFour = cursor <= count - 4
-                && base[cursor] == 0 && base[cursor + 1] == 0 && base[cursor + 2] == 0 && base[cursor + 3] == 1
-            let isThree = base[cursor] == 0 && base[cursor + 1] == 0 && base[cursor + 2] == 1
-            guard isFour || isThree else {
-                cursor += 1
-                continue
-            }
-            let prefixLength = isFour ? 4 : 3
-            if let start = currentStart, cursor > start { body(start, cursor - start) }
-            currentStart = cursor + prefixLength
-            cursor += prefixLength
+        var searchFrom = 2
+        while searchFrom < count, let hit = memchr(base + searchFrom, 0x01, count - searchFrom) {
+            let one = base.distance(to: hit.assumingMemoryBound(to: UInt8.self))
+            searchFrom = one + 1
+            guard base[one - 1] == 0, base[one - 2] == 0 else { continue }
+            if let start = currentStart { body(start, one - 2) }
+            currentStart = one + 1
+            // The next start code's zeros cannot be this one's.
+            searchFrom = one + 3
         }
-        if let start = currentStart, start < count { body(start, count - start) }
+        if let start = currentStart { body(start, count) }
     }
 
     /// Extracts the parameter sets from an Annex-B access unit. Keyframes carry them inline; a
