@@ -32,4 +32,36 @@ struct NvstCoreAudioFormatTests {
     @Test func goingBackToStereoPutsItBack() {
         #expect(change(requested: 2, maximum: 8, raisedEarlier: true, current: 6) == 2)
     }
+
+    private func toOpen(requested: Int, fallback: Bool = false, failures: Int = 0) -> Int {
+        NvstCoreAudioFormat.playoutChannelsToOpen(requested: requested, isStereoFallback: fallback,
+                                                   surroundFailures: failures)
+    }
+
+    /// The request is what an attempt opens, until surround has failed too often since it was made.
+    @Test func anAttemptOpensTheRequestUntilSurroundFailedTwice() {
+        #expect(toOpen(requested: 2) == 2)
+        #expect(toOpen(requested: 6) == 6)
+        #expect(toOpen(requested: 8, failures: 1) == 8)
+        #expect(toOpen(requested: 8, failures: 2) == 2)
+        #expect(toOpen(requested: 6, failures: 3) == 2)
+    }
+
+    @Test func theStereoFallbackOpensStereo() {
+        #expect(toOpen(requested: 6, fallback: true) == 2)
+        #expect(toOpen(requested: 8, fallback: true, failures: 1) == 2)
+    }
+
+    /// Only an attempt that got as far as a surround format uses up an attempt and falls back,
+    /// and the fallback itself never falls back again.
+    @Test func whatAFailedOpenMeans() {
+        let beforeFormat = NvstCoreAudioFormat.failedPlayoutOpen(openedChannels: nil, isStereoFallback: false)
+        #expect(!beforeFormat.countsAsSurroundFailure && !beforeFormat.fallsBackToStereo)
+        let stereo = NvstCoreAudioFormat.failedPlayoutOpen(openedChannels: 2, isStereoFallback: false)
+        #expect(!stereo.countsAsSurroundFailure && !stereo.fallsBackToStereo)
+        let surround = NvstCoreAudioFormat.failedPlayoutOpen(openedChannels: 6, isStereoFallback: false)
+        #expect(surround.countsAsSurroundFailure && surround.fallsBackToStereo)
+        let fallback = NvstCoreAudioFormat.failedPlayoutOpen(openedChannels: 2, isStereoFallback: true)
+        #expect(!fallback.countsAsSurroundFailure && !fallback.fallsBackToStereo)
+    }
 }

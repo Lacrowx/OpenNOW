@@ -30,8 +30,12 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
     /// Called on the device's queue each time the output is about to open or reopen, before the
     /// first render callback in the new format, with the speaker of each device channel.
     public var onPlayoutFormatChange: (@Sendable (_ speakers: [NvstSpeaker?]) -> Void)?
+    /// The channel count asked for: what every attempt opens, unless it is the stereo fallback
+    /// or surround has failed `NvstCoreAudioFormat.surroundOpenAttempts` times since it was set.
     private var requestedPlayoutChannels: Int
     private var raisedPreferredChannels = false
+    /// Failed opens of a surround format since `requestedPlayoutChannels` last changed.
+    private var surroundOpenFailures = 0
     public private(set) var inputChannels = 1
     public let outputSampleRate = 48_000.0
     public let inputSampleRate = 48_000.0
@@ -113,6 +117,7 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
             let supported = NvstCoreAudioFormat.supportedPlayoutChannelCount(count)
             guard supported != requestedPlayoutChannels else { return }
             requestedPlayoutChannels = supported
+            surroundOpenFailures = 0
             if wantsRunning { stopLocked(); startLocked() }
         }
     }
@@ -134,8 +139,17 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
         }
     }
 
-    private func startLocked() {
+    /// One attempt to open the output. A failed surround open is tried once more in stereo
+    /// (`isStereoFallback`), which never falls back again and leaves the session's preferred
+    /// channel count alone, so `stop()` still puts back a preference the failed attempt raised.
+    private func startLocked(isStereoFallback: Bool = false) {
         guard unit == nil else { return }
+        lastStartStatus = noErr
+        let channels = NvstCoreAudioFormat.playoutChannelsToOpen(requested: requestedPlayoutChannels,
+            isStereoFallback: isStereoFallback, surroundFailures: surroundOpenFailures)
+        // The format this attempt chose, once the session is active; nil while it has not got
+        // that far.
+        var openedChannels: Int?
         do {
             let session = AVAudioSession.sharedInstance()
             #if os(tvOS)
@@ -153,28 +167,32 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
             }
             try session.setActive(true)
             // On the active session, and only when the value changes: see
-            // `NvstCoreAudioFormat.preferredOutputChannelChange`.
-            if let channels = NvstCoreAudioFormat.preferredOutputChannelChange(
-                requested: requestedPlayoutChannels, routeMaximum: session.maximumOutputNumberOfChannels,
-                raisedEarlier: raisedPreferredChannels, current: session.preferredOutputNumberOfChannels) {
-                try? session.setPreferredOutputNumberOfChannels(channels)
+            // `NvstCoreAudioFormat.preferredOutputChannelChange`. The stereo fallback leaves it as
+            // the failed attempt set it: writing it again would only change the route once more.
+            if !isStereoFallback {
+                if let preferred = NvstCoreAudioFormat.preferredOutputChannelChange(
+                    requested: channels, routeMaximum: session.maximumOutputNumberOfChannels,
+                    raisedEarlier: raisedPreferredChannels, current: session.preferredOutputNumberOfChannels) {
+                    try? session.setPreferredOutputNumberOfChannels(preferred)
+                }
+                raisedPreferredChannels = channels > 2
             }
-            raisedPreferredChannels = requestedPlayoutChannels > 2
             inputChannels = max(1, min(2, session.inputNumberOfChannels))
             outputChannels = max(2, NvstCoreAudioFormat.playoutChannelCount(
-                requested: requestedPlayoutChannels, deviceChannels: session.outputNumberOfChannels))
+                requested: channels, deviceChannels: session.outputNumberOfChannels))
+            openedChannels = outputChannels
             let labels = session.currentRoute.outputs.first?.channels?.map(\.channelLabel) ?? []
             let speakers = NvstAudioPlacement.speakers(forChannelLabels: labels, channelCount: outputChannels)
             var description = AudioComponentDescription(componentType: kAudioUnitType_Output,
                 componentSubType: kAudioUnitSubType_RemoteIO, componentManufacturer: kAudioUnitManufacturer_Apple,
                 componentFlags: 0, componentFlagsMask: 0)
             guard let component = AudioComponentFindNext(nil, &description) else {
-                lastStartStatus = kAudio_ParamError
+                try check(kAudio_ParamError)
                 return
             }
             var created: AudioUnit?
             try check(AudioComponentInstanceNew(component, &created))
-            guard let created else { lastStartStatus = kAudio_ParamError; return }
+            guard let created else { try check(kAudio_ParamError); return }
             unit = created
             var enabled: UInt32 = capturesMicrophone ? 1 : 0
             try check(AudioUnitSetProperty(created, kAudioOutputUnitProperty_EnableIO,
@@ -209,12 +227,13 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
         } catch {
             if lastStartStatus == noErr { lastStartStatus = kAudio_ParamError }
             stopLocked()
-            // A route that refuses the surround format still plays: reopen in stereo, and the
-            // layout is folded down to it.
-            if requestedPlayoutChannels > 2 {
-                requestedPlayoutChannels = 2
-                startLocked()
-            }
+            // A route that refuses the surround format still plays: this once, reopen in stereo,
+            // and the layout is folded down to it. The request stays, so the next reopen (a route
+            // change) tries surround again until it has failed too often.
+            let failure = NvstCoreAudioFormat.failedPlayoutOpen(openedChannels: openedChannels,
+                                                                isStereoFallback: isStereoFallback)
+            if failure.countsAsSurroundFailure { surroundOpenFailures += 1 }
+            if failure.fallsBackToStereo { startLocked(isStereoFallback: true) }
         }
     }
 

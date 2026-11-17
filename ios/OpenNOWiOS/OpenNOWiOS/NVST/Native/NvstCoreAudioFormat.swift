@@ -42,6 +42,28 @@ public enum NvstCoreAudioFormat {
         return wanted == current ? nil : wanted
     }
 
+    /// How many failed surround opens, since the request last changed, are tried again before
+    /// later opens go straight to stereo. A route often refuses the first surround open while
+    /// HDMI renegotiates after the preference was raised.
+    public static let surroundOpenAttempts = 2
+
+    /// The channel count one attempt to open the output asks for: the request, or stereo when
+    /// this attempt is the fallback after a failed surround open or surround has failed too often.
+    public static func playoutChannelsToOpen(requested: Int, isStereoFallback: Bool, surroundFailures: Int) -> Int {
+        guard !isStereoFallback, surroundFailures < surroundOpenAttempts else { return 2 }
+        return supportedPlayoutChannelCount(requested)
+    }
+
+    /// What a failed open means. `openedChannels` is the format the attempt had chosen, or nil when
+    /// it failed before choosing one (setting the category or activating the session). Only a
+    /// surround format uses up an attempt and is tried once more in stereo; the stereo attempt
+    /// never falls back again.
+    public static func failedPlayoutOpen(openedChannels: Int?,
+                                         isStereoFallback: Bool) -> (countsAsSurroundFailure: Bool, fallsBackToStereo: Bool) {
+        let surround = (openedChannels ?? 0) > 2
+        return (surround, surround && !isStereoFallback)
+    }
+
     public static func captureChannelCount(deviceChannels: Int) -> Int {
         max(1, min(2, deviceChannels))
     }
