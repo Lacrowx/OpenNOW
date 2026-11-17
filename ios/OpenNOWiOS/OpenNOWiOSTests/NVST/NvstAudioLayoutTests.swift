@@ -56,6 +56,28 @@ struct NvstAudioLayoutTests {
                 == "4f707573486561640108000080bb00000000" + "010503" + "0006010702030405")
     }
 
+    /// The line a live seat's DESCRIBE carried on 2026-11-17: one entry per channel count, each
+    /// the channel count, stream count and coupled count, then one mapping digit per channel.
+    @Test func theSeatsDescribeListsItsLayouts() throws {
+        let describe = """
+        m=audio 0 RTP/AVP 96 97
+        a=fmtp:97 surround-params=85306123457
+        a=nv-audio-surround-opus-params: 20000000000;32102100000;42201230000;53204123000;64204123500;74304123560;85306123457;
+        a=rtpmap:97 opus/16000/2
+        """
+        let layouts = NvstAudioLayout.seatLayouts(describe: describe)
+        let fiveOne = try #require(layouts.first { $0.channels == 6 })
+        #expect(fiveOne.streams == 4 && fiveOne.coupledStreams == 2 && fiveOne.mapping == [0, 4, 1, 2, 3, 5])
+        let sevenOne = try #require(layouts.first { $0.channels == 8 })
+        #expect(sevenOne.streams == 5 && sevenOne.coupledStreams == 3 && sevenOne.mapping == [0, 6, 1, 2, 3, 4, 5, 7])
+        #expect(layouts.count == 2)   // stereo and the odd counts are not surround layouts this client plays
+    }
+
+    @Test func aDescribeWithoutTheLineOrWithBrokenEntriesListsNothing() {
+        #expect(NvstAudioLayout.seatLayouts(describe: "a=x-nv-audio.surround.enable:0").isEmpty)
+        #expect(NvstAudioLayout.seatLayouts(describe: "a=nv-audio-surround-opus-params: 64204;8530612345x;;").isEmpty)
+    }
+
     @Test func labelsAndSpeakers() {
         #expect(NvstAudioLayout.stereo.label == "Stereo")
         #expect(NvstAudioLayout.surround51.label == "5.1")

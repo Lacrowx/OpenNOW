@@ -244,7 +244,8 @@ extension NvstRtspNegotiator {
                                steps: inout [String]) async throws {
         onProgress?(.preparingBundle)
         let bundleIdentity = await reserver.bundleIdentity(for: resolved.handoff,
-                                                           microphoneOfferedOnBundle: described.microphoneOfferedOnBundle)
+                                                           microphoneOfferedOnBundle: described.microphoneOfferedOnBundle,
+                                                           seatAudioLayouts: NvstAudioLayout.seatLayouts(describe: described.body))
         let bundlePort = bundleIdentity?.bundlePort ?? reservation.bundlePort
         let fingerprint = bundleIdentity?.dtlsFingerprint ?? reservation.dtlsFingerprint
         let localAddress = bundleIdentity?.localAddress ?? reservation.localAddress

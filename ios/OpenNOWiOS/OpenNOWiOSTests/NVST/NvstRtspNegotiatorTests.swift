@@ -268,7 +268,8 @@ private struct StubReserver: NvstBundleReserving {
     }
 
     func reserveBundle() async throws -> NvstBundleReservation { reservation }
-    func bundleIdentity(for handoff: NVSTVideoHandoff, microphoneOfferedOnBundle: Bool) async -> NvstBundleReservation? { lateIdentity }
+    func bundleIdentity(for handoff: NVSTVideoHandoff, microphoneOfferedOnBundle: Bool,
+                        seatAudioLayouts: [NvstAudioLayout]) async -> NvstBundleReservation? { lateIdentity }
 }
 
 @Suite struct NvstRtspNegotiatorTests {

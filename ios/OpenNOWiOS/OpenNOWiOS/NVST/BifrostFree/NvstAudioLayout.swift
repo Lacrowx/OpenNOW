@@ -8,7 +8,10 @@ public enum NvstSpeaker: Hashable, Sendable {
 /// The channel layout of the seat's game audio: one Opus multistream configuration, and the
 /// speaker each decoded channel belongs to.
 ///
-/// The seat states the configuration in its `0x0408` message (`NvstAudioSurroundInfo`). The two
+/// The seat lists one configuration per channel count in its DESCRIBE answer
+/// (`nv-audio-surround-opus-params`, read by `seatLayouts(describe:)`) and sends the requested one
+/// from its first audio packet; `libBifrost2.dylib` reads the same line ("Got the right opus info
+/// from server"). Its `0x0408` message (`NvstAudioSurroundInfo`) can change it later. The two
 /// surround layouts below are the official client's own, from the strings in `libBifrost2.dylib`:
 /// `channel_mapping=0,4,1,5,2,3;num_streams=4;coupled_streams=2` and
 /// `channel_mapping=0,6,1,7,2,3,4,5;num_streams=5;coupled_streams=3`.
@@ -59,6 +62,24 @@ public struct NvstAudioLayout: Equatable, Sendable {
         }
         self.init(channels: Int(info.channels), streams: Int(info.streams),
                   coupledStreams: Int(info.coupledStreams), mapping: info.channelMapping)
+    }
+
+    /// The surround layouts a seat's DESCRIBE lists in
+    /// `a=nv-audio-surround-opus-params: 64204123500;85306123457;…`: each entry is the channel
+    /// count, the stream count and the coupled count, then one mapping digit per channel, padded
+    /// with zeroes. Entries that are not a layout this client plays are left out.
+    public static func seatLayouts(describe body: String) -> [NvstAudioLayout] {
+        let prefix = "a=nv-audio-surround-opus-params:"
+        guard let line = body.components(separatedBy: .newlines)
+            .map({ $0.trimmingCharacters(in: .whitespaces) })
+            .first(where: { $0.hasPrefix(prefix) }) else { return [] }
+        return line.dropFirst(prefix.count).split(separator: ";").compactMap { entry in
+            let digits = entry.trimmingCharacters(in: .whitespaces).compactMap(\.wholeNumberValue)
+            guard digits.count == entry.trimmingCharacters(in: .whitespaces).count, digits.count >= 3,
+                  digits.count >= 3 + digits[0] else { return nil }
+            return NvstAudioLayout(channels: digits[0], streams: digits[1], coupledStreams: digits[2],
+                                   mapping: digits[3..<(3 + digits[0])].map { UInt8($0) })
+        }
     }
 
     /// The speaker of each decoded channel: the Windows order that the announce's speaker mask

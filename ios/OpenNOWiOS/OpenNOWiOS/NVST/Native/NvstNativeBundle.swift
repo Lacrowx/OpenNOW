@@ -144,8 +144,11 @@ public final class NvstNativeBundle: @unchecked Sendable {
     private var receivePipeline: NvstAudioReceivePipeline?
     private var sendPipeline: NvstAudioSendPipeline?
     private var audioDevice: NvstCoreAudioDevice?
-    /// What ANNOUNCE asked the seat for. The seat's `0x0408` decides what is decoded.
+    /// What ANNOUNCE asked the seat for.
     private var requestedAudioChannelCount = 2
+    /// The seat's DESCRIBE layout for the requested surround count, which it sends from the first
+    /// audio packet; nil for stereo or when DESCRIBE listed none. A later `0x0408` overrides it.
+    private var describedAudioLayout: NvstAudioLayout?
     /// Guards the three values below: they are written on the transport's and the device's queues
     /// and read on the render thread.
     private let audioStateLock = NSLock()
@@ -188,9 +191,13 @@ public final class NvstNativeBundle: @unchecked Sendable {
     /// carries; DTLS cannot complete before the seat has received them, so it is driven in the
     /// background and `onHandshakeComplete` fires when the seat starts answering. Nothing here talks
     /// to the RTSP negotiator, which keeps using `NvstBundleReserving`.
-    public func prepare(microphone: MicrophoneSetup?, audioChannelCount: Int) async throws -> Identity {
+    /// `seatAudioLayouts` are the layouts the seat's DESCRIBE lists (`NvstAudioLayout.seatLayouts`).
+    public func prepare(microphone: MicrophoneSetup?, audioChannelCount: Int,
+                        seatAudioLayouts: [NvstAudioLayout] = []) async throws -> Identity {
         self.audioChannelCount = NvstCoreAudioFormat.supportedPlayoutChannelCount(audioChannelCount)
         requestedAudioChannelCount = self.audioChannelCount
+        describedAudioLayout = requestedAudioChannelCount > 2
+            ? seatAudioLayouts.first { $0.channels == requestedAudioChannelCount } : nil
         self.microphoneSetup = microphone
         // ANNOUNCE goes out before the DTLS handshake can key a send pipeline, so whether the mic is
         // carried and the SSRC its RTP arrives with must be known now. The SSRC is deterministic, so
@@ -376,9 +383,16 @@ public final class NvstNativeBundle: @unchecked Sendable {
             receivePipeline = try NvstAudioReceivePipeline(
                 srtp: try NvstAudioSrtp(masterKey: directions.inbound.key, masterSalt: directions.inbound.salt, profile: profile),
                 framesPerPacket: Self.decodedAudioFramesPerPacket,
-                // A surround request waits for the seat to say what it sends.
-                layout: requestedAudioChannelCount > 2 ? nil : .stereo
+                // A surround request decodes the layout the seat's DESCRIBE listed for it; without
+                // one, it waits for the seat to say what it sends.
+                layout: requestedAudioChannelCount > 2 ? describedAudioLayout : .stereo
             )
+            if requestedAudioChannelCount > 2 {
+                onAudioDiagnostic?(describedAudioLayout.map {
+                    "decoding the seat's described \($0.label) from the first packet (streams=\($0.streams) coupled=\($0.coupledStreams) mapping=\($0.mapping.map(String.init).joined(separator: ",")))"
+                } ?? "the seat's DESCRIBE lists no layout for \(requestedAudioChannelCount) channels; waiting for its surround info")
+            }
+            receivePipeline?.onPacketDiagnostic = { [weak self] note in self?.onAudioDiagnostic?(note) }
             receivePipeline?.onPendingTimeout = { [weak self] in
                 self?.audioLayoutSettled("the seat sent no surround info within 2 s; decoding stereo")
             }
@@ -547,6 +561,9 @@ public final class NvstNativeBundle: @unchecked Sendable {
     public var audioBacklog: (seconds: Double, trims: UInt64)? {
         receivePipeline.map { ($0.backlogSeconds, $0.snapshot.backlogTrims) }
     }
+
+    /// Audio packets the decoder refused; nil before the audio has started.
+    public var audioDecodeFailures: UInt64? { receivePipeline?.snapshot.decodeFailures }
 
     /// "Stereo", "5.1" or "7.1" as decoded, with a note while it is folded to stereo; nil until
     /// the audio has started and the seat's layout is known.

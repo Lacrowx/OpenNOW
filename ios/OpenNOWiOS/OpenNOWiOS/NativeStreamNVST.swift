@@ -159,8 +159,8 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
         let endpoints = allocation.nativeRtspsEndpoints ?? []
         guard !endpoints.isEmpty else { throw NvstRtspNegotiationError.missingEndpoint }
         clock.start()
-        let reserver = NvstLocalBundleReserver(bundleProvider: { [weak self] handoff, micOffered in
-            await self?.prepareBundle(handoff: handoff, microphoneOffered: micOffered)
+        let reserver = NvstLocalBundleReserver(bundleProvider: { [weak self] handoff, micOffered, seatAudioLayouts in
+            await self?.prepareBundle(handoff: handoff, microphoneOffered: micOffered, seatAudioLayouts: seatAudioLayouts)
         })
         self.reserver = reserver
         let color = StreamSettingsResolver.colorQuality(for: settings).rawValue
@@ -204,7 +204,8 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
         onDualSenseOutput = onOutput
     }
 
-    private func prepareBundle(handoff: NVSTVideoHandoff, microphoneOffered: Bool) async -> NvstBundleReservation? {
+    private func prepareBundle(handoff: NVSTVideoHandoff, microphoneOffered: Bool,
+                               seatAudioLayouts: [NvstAudioLayout]) async -> NvstBundleReservation? {
         guard !stopped else { return nil }
         do {
             let nativeBundle = NvstNativeBundle(handoff: handoff, identity: try NvstDtlsIdentity(), logger: nil)
@@ -227,7 +228,8 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
             // The host's native bundle must offer the mic; legacy mic carriage is not announced.
             let mic = microphoneOffered && settings.keepMicEnabled
                 ? NvstNativeBundle.MicrophoneSetup(volume: 1, initiallyEnabled: true) : nil
-            let identity = try await nativeBundle.prepare(microphone: mic, audioChannelCount: audioChannelCount)
+            let identity = try await nativeBundle.prepare(microphone: mic, audioChannelCount: audioChannelCount,
+                                                              seatAudioLayouts: seatAudioLayouts)
             guard !stopped else { nativeBundle.close(); return nil }
             nativeBundle.setRemoteAudioMuted(settings.streamerPreferences.audioMuted)
             pipeline?.attach(bundle: nativeBundle)
@@ -585,11 +587,12 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
         let audioBacklog = bundle?.audioBacklog.map {
             String(format: " audioBacklog=%.0fms trims=%d", $0.seconds * 1000, Int($0.trims))
         } ?? ""
+        let audioDecodeFailures = bundle?.audioDecodeFailures.map { " audioDecodeFail=\($0)" } ?? ""
         var nvstSample = NativeStreamNVSTSample(received: counters.framesEmitted, decoded: decoded, bytes: counters.bytesReceived,
             lost: stats.finalizedLossPackets, packets: stats.authenticatedPackets, resolution: decoder.decodedResolution,
             decodeMilliseconds: state.decodeP50Milliseconds, pingMilliseconds: ping >= 0 ? ping : nil,
             jitterMilliseconds: Double(stats.lastJitter) / 90, hardware: decoder.isHardwareAccelerated,
-            pixelFormat: decoder.outputPixelFormatName, bitstream: decoder.bitstreamFormat?.summary ?? "pending", detail: detail + audioBacklog)
+            pixelFormat: decoder.outputPixelFormatName, bitstream: decoder.bitstreamFormat?.summary ?? "pending", detail: detail + audioBacklog + audioDecodeFailures)
         nvstSample.audioFormat = bundle?.audioFormatLabel
         nvstSample.audioLevels = bundle?.takeAudioChannelLevels() ?? ""
         onSample(nvstSample)

@@ -60,6 +60,10 @@ public final class NvstAudioReceivePipeline: @unchecked Sendable {
     public let framesPerPacket: Int
     /// Called once, off the pipeline's lock, when the wait ran out and stereo was chosen.
     public var onPendingTimeout: (@Sendable () -> Void)?
+    /// Called off the lock for the first few authenticated packets with their payload type, size
+    /// and first bytes: what the seat actually sends, whatever was asked for.
+    public var onPacketDiagnostic: (@Sendable (String) -> Void)?
+    private static let describedPackets: UInt64 = 3
 
     private let srtp: NvstAudioSrtp
     private let lock = NSLock()
@@ -149,11 +153,13 @@ public final class NvstAudioReceivePipeline: @unchecked Sendable {
     /// where it is recovered — the seat sent it twice precisely so that a single loss would not
     /// reach the decoder.
     public func ingest(_ datagram: Data) {
-        if ingestLocked(datagram) { onPendingTimeout?() }
+        var note: String?
+        if ingestLocked(datagram, note: &note) { onPendingTimeout?() }
+        if let note { onPacketDiagnostic?(note) }
     }
 
     /// Returns true when this datagram ended the pending wait by choosing stereo.
-    private func ingestLocked(_ datagram: Data) -> Bool {
+    private func ingestLocked(_ datagram: Data, note: inout String?) -> Bool {
         lock.lock()
         defer { lock.unlock() }
         counters.datagrams += 1
@@ -180,6 +186,10 @@ public final class NvstAudioReceivePipeline: @unchecked Sendable {
         replayWindows[packet.ssrc] = replayWindow
         counters.ssrc = packet.ssrc
         counters.authenticated += 1
+        if counters.authenticated <= Self.describedPackets {
+            note = "packet \(counters.authenticated): payloadType=\(packet.payloadType) bytes=\(payload.count) first="
+                + payload.prefix(8).map { String(format: "%02x", $0) }.joined()
+        }
 
         let timedOut = settlePendingLocked()
         guard decoder != nil else { return timedOut }
