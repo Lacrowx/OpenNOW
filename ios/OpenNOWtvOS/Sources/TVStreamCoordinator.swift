@@ -51,20 +51,6 @@ struct TVStreamFigure: Hashable {
     let value: String
 }
 
-enum TVStreamMenuItem: String {
-    case resume = "Resume"
-    case showStats = "Show Stats"
-    case hideStats = "Hide Stats"
-    case leftTriggerFeel = "L2 Feel"
-    case rightTriggerFeel = "R2 Feel"
-    case leave = "Leave Stream"
-    case endSession = "End Session"
-    case keepPlaying = "Keep Playing"
-    case confirmEndSession = "End Session Now"
-    case retry = "Try Again"
-    case close = "Close"
-}
-
 /// Owns one native NVST stream on tvOS: session start/stop, controller input, and the in-stream menu.
 @MainActor
 final class TVStreamCoordinator: NSObject, ObservableObject {
@@ -77,23 +63,19 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
     /// The figures of the stats HUD, in display order; empty until the first measurement.
     @Published private(set) var hudItems: [String] = []
     @Published private(set) var statsVisible: Bool
-    @Published private(set) var menuVisible = false
-    @Published private(set) var selection = 0
-    /// The menu is asking whether to end the session, which closes the game on the host.
-    @Published private(set) var confirmingEnd = false
+    @Published private var menu = TVStreamMenu()
     /// Set while HDR video is playing; the stream screen asks tvOS to match the TV to it.
     @Published private(set) var displayCriteria: AVDisplayCriteria?
 
-    /// The menu is drawn and navigated by this class, not the tvOS focus engine: controller
-    /// input stays away from UIKit for the whole stream, so Back can never leave the app.
-    var menuItems: [TVStreamMenuItem] {
-        if confirmingEnd { return [.keepPlaying, .confirmEndSession] }
-        if failed { return (canRetry ? [.retry] : []) + [.close, .endSession] }
-        guard menuVisible else { return [] }
-        // Only a DualSense has triggers to shape.
-        let dualSense = GCController.controllers().contains { $0.extendedGamepad is GCDualSenseGamepad }
-        return [.resume, statsVisible ? .hideStats : .showStats] + (dualSense ? [.leftTriggerFeel, .rightTriggerFeel] : [])
-            + [.leave, .endSession]
+    var menuVisible: Bool { menu.visible }
+    var selection: Int { menu.selection }
+    /// The menu is asking whether to end the session, which closes the game on the host.
+    var confirmingEnd: Bool { menu.confirmingEnd }
+    var menuItems: [TVStreamMenuItem] { menu.items(in: menuContext) }
+
+    private var menuContext: TVStreamMenu.Context {
+        TVStreamMenu.Context(failed: failed, canRetry: canRetry, statsVisible: statsVisible,
+            dualSense: GCController.controllers().contains { $0.extendedGamepad is GCDualSenseGamepad })
     }
 
     /// Ends the session on the host. Set by the stream screen.
@@ -414,9 +396,7 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
 
     private func fail(_ reason: String) {
         failed = true
-        menuVisible = false
-        confirmingEnd = false
-        selection = 0
+        menu.setVisible(false)
         inputBridge.setControllerHUDActive(true)
         videoActive = false
         status = "Stream failed"
@@ -431,43 +411,22 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
     }
 
     private func setMenuVisible(_ visible: Bool) {
-        guard menuVisible != visible, !failed else { return }
-        selection = 0
-        confirmingEnd = false
-        menuVisible = visible
+        guard menu.visible != visible, !failed else { return }
+        menu.setVisible(visible)
         // Releases the game's buttons while the menu owns the controller, and blocks held ones on return.
         inputBridge.setControllerHUDActive(visible)
     }
 
-    /// Opens the question with "Keep Playing" selected; leaving it returns to "End Session".
-    private func setConfirmingEnd(_ confirming: Bool) {
-        confirmingEnd = confirming
-        selection = confirming ? 0 : menuItems.count - 1
-    }
-
     /// Menu navigation from a game controller (via the input bridge) or the Siri Remote.
     func handleMenu(_ command: NativeStreamControllerHUDCommand) {
-        let items = menuItems
-        guard !stopped, !items.isEmpty else { return }
-        switch command {
-        case .up: selection = max(0, selection - 1)
-        case .down: selection = min(items.count - 1, selection + 1)
-        // Nothing is left to resume behind a failure, so Back closes it.
-        case .back: if confirmingEnd { setConfirmingEnd(false) } else if failed { leave() } else { setMenuVisible(false) }
-        case .activate:
-            switch items[min(selection, items.count - 1)] {
-            case .resume: setMenuVisible(false)
-            case .endSession: setConfirmingEnd(true)
-            case .keepPlaying: setConfirmingEnd(false)
-            case .confirmEndSession: stop(); onEndSession?()
-            case .showStats: setStatsVisible(true)
-            case .hideStats: setStatsVisible(false)
-            case .leftTriggerFeel, .rightTriggerFeel: stepTriggerFeel(items[min(selection, items.count - 1)], by: 1)
-            case .leave, .close: leave()
-            case .retry: retry()
-            }
-        case .left: stepTriggerFeel(items[min(selection, items.count - 1)], by: -1)
-        case .right: stepTriggerFeel(items[min(selection, items.count - 1)], by: 1)
+        guard !stopped, let action = menu.handle(command, in: menuContext) else { return }
+        switch action {
+        case .resume: setMenuVisible(false)
+        case .setStatsVisible(let visible): setStatsVisible(visible)
+        case .stepTriggerFeel(let item, let steps): stepTriggerFeel(item, by: steps)
+        case .leave: leave()
+        case .retry: retry()
+        case .endSession: stop(); onEndSession?()
         }
     }
 
