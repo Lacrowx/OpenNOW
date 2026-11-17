@@ -9,6 +9,11 @@ import Foundation
 /// session start) modelled as the seat-side latency estimate; the surrounding floats sit at
 /// -1/+1 sentinels. The integers at +4 and +28 move with load and are carried raw for
 /// calibration until their meaning is pinned.
+///
+/// The integer at +8 is the seat's own round-trip delay in whole milliseconds. Read from the
+/// official client (libBifrost2 2.0.90.126, 2026-11-17), not from a capture:
+/// `ClientSession::handleServerQosInfoCommand` hands it to `updateMinRtd`, and `getQosStats`
+/// passes it on to the overlay's `RTD %3ums`. That client measures no ping of its own.
 public struct NvstSeatStats: Equatable, Sendable {
     public static let commandCode = NvstControlCommandCode.qosInfo
     /// Payload length in every captured message.
@@ -18,6 +23,8 @@ public struct NvstSeatStats: Equatable, Sendable {
     public let gameFramesPerSecond: Double
     /// Seconds-scale latency figure at +40; -1 when the seat marks it unavailable.
     public let latencySeconds: Double
+    /// The seat's round-trip delay at +8, in milliseconds — the official client's displayed RTD.
+    public let roundTripDelayMilliseconds: UInt32
     /// Uninterpreted counters at +4 and +28, for the calibration log.
     public let counterA: UInt32
     public let counterB: UInt32
@@ -28,7 +35,8 @@ public struct NvstSeatStats: Equatable, Sendable {
         do {
             try reader.skip(4)
             let counterA = try reader.u32LE()
-            try reader.skip(20)
+            let roundTripDelay = try reader.u32LE()
+            try reader.skip(16)
             let counterB = try reader.u32LE()
             let gameFps = Double(bitPattern: try reader.u64LE())
             let latency = Float(bitPattern: try reader.u32LE())
@@ -37,6 +45,7 @@ public struct NvstSeatStats: Equatable, Sendable {
             return NvstSeatStats(
                 gameFramesPerSecond: gameFps,
                 latencySeconds: latency.isFinite ? Double(latency) : -1,
+                roundTripDelayMilliseconds: roundTripDelay,
                 counterA: counterA,
                 counterB: counterB
             )
@@ -46,7 +55,7 @@ public struct NvstSeatStats: Equatable, Sendable {
     }
 
     public var summary: String {
-        String(format: "seatStats gameFps=%.1f latency=%.1fms a=%u b=%u",
-               gameFramesPerSecond, latencySeconds * 1000, counterA, counterB)
+        String(format: "seatStats gameFps=%.1f latency=%.1fms rtd=%ums a=%u b=%u",
+               gameFramesPerSecond, latencySeconds * 1000, roundTripDelayMilliseconds, counterA, counterB)
     }
 }
