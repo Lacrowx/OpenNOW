@@ -344,6 +344,11 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
             packetsReceivedDelta: reading.packetsReceivedDelta, packetLossPercent: reading.lossPercent,
             resolution: reading.resolution, codec: codecLabel))
         checkpointHistory(ended: false)
+        // Every second that has levels, not only the stats line's one in five: the meter is reset
+        // by each sample, and an intermittent centre channel must not read as silent.
+        if !sample.audioLevels.isEmpty {
+            tvStreamDebug("[TVStream] audio \(sample.audioFormat ?? "pending") dBFS all/above200Hz per channel: \(sample.audioLevels)")
+        }
         samplesSinceStatsLog += 1
         if samplesSinceStatsLog >= 5 { logStats(sample, ping: ping) }
     }
@@ -355,9 +360,6 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
                      ping, sample.jitterMilliseconds, sample.lost, inputSends, inputRawAgeMin * 1000, input.count,
                      input.eventAge / count * 1000, input.eventAgeMax * 1000,
                      input.send / count * 1000, input.sendMax * 1000) + sample.detail)
-        if !sample.audioLevels.isEmpty {
-            tvStreamDebug("[TVStream] audio \(sample.audioFormat ?? "pending") dBFS all/above200Hz per channel: \(sample.audioLevels)")
-        }
         inputTimings = (0, 0, 0, 0, 0)
         inputSends = 0
         inputRawAgeMin = .infinity

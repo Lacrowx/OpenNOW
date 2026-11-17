@@ -30,6 +30,8 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
     /// Called on the device's queue each time the output is about to open or reopen, before the
     /// first render callback in the new format, with the speaker of each device channel.
     public var onPlayoutFormatChange: (@Sendable (_ speakers: [NvstSpeaker?]) -> Void)?
+    /// One line, on the device's queue, when the output is about to open and when an open fails.
+    public var onDiagnostic: (@Sendable (String) -> Void)?
     /// The channel count asked for: what every attempt opens, unless it is the stereo fallback
     /// or surround has failed `NvstCoreAudioFormat.surroundOpenAttempts` times since it was set.
     private var requestedPlayoutChannels: Int
@@ -183,6 +185,11 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
             openedChannels = outputChannels
             let labels = session.currentRoute.outputs.first?.channels?.map(\.channelLabel) ?? []
             let speakers = NvstAudioPlacement.speakers(forChannelLabels: labels, channelCount: outputChannels)
+            onDiagnostic?("output opening with \(outputChannels) channels (asked for \(channels)"
+                + (isStereoFallback ? " as the stereo fallback" : "")
+                + "; route maximum \(session.maximumOutputNumberOfChannels), session grants \(session.outputNumberOfChannels));"
+                + " IO buffer \(Self.milliseconds(session.ioBufferDuration)) ms,"
+                + " output latency \(Self.milliseconds(session.outputLatency)) ms")
             var description = AudioComponentDescription(componentType: kAudioUnitType_Output,
                 componentSubType: kAudioUnitSubType_RemoteIO, componentManufacturer: kAudioUnitManufacturer_Apple,
                 componentFlags: 0, componentFlagsMask: 0)
@@ -233,8 +240,18 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
             let failure = NvstCoreAudioFormat.failedPlayoutOpen(openedChannels: openedChannels,
                                                                 isStereoFallback: isStereoFallback)
             if failure.countsAsSurroundFailure { surroundOpenFailures += 1 }
+            let nsError = error as NSError
+            onDiagnostic?("output open failed with status \(lastStartStatus) (\(nsError.domain) \(nsError.code))"
+                + (openedChannels.map { " opening \($0) channels" } ?? " before choosing a format")
+                + (isStereoFallback ? " as the stereo fallback" : "")
+                + "; surround failures \(surroundOpenFailures) of \(NvstCoreAudioFormat.surroundOpenAttempts)"
+                + (failure.fallsBackToStereo ? "; falling back to stereo" : "; no fallback"))
             if failure.fallsBackToStereo { startLocked(isStereoFallback: true) }
         }
+    }
+
+    private static func milliseconds(_ seconds: TimeInterval) -> String {
+        String(format: "%.1f", seconds * 1000)
     }
 
     private func check(_ status: OSStatus) throws {

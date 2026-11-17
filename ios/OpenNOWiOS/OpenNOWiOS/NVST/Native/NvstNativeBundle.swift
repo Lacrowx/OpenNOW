@@ -412,6 +412,7 @@ public final class NvstNativeBundle: @unchecked Sendable {
                                          capturesMicrophone: microphoneSetup != nil,
                                          preferredInputDeviceUID: microphoneSetup?.deviceUniqueID)
         device.onPlayoutFormatChange = { [weak self] speakers in self?.devicePlayoutFormatChanged(speakers) }
+        device.onDiagnostic = { [weak self] message in self?.onAudioDiagnostic?(message) }
         device.fillPlayout = { [weak self, weak device] destination, sampleCount in
             // The placement has to be the one made for the format the device is rendering right
             // now; any other would take the wrong amount of audio and put it on the wrong channels.
@@ -477,7 +478,6 @@ public final class NvstNativeBundle: @unchecked Sendable {
         deviceSpeakers = speakers
         audioStateLock.unlock()
         refreshAudioPlacement()
-        onAudioDiagnostic?("output opened with \(speakers.count) channels")
     }
 
     private func refreshAudioPlacement() {
@@ -493,7 +493,9 @@ public final class NvstNativeBundle: @unchecked Sendable {
 
     /// The seat says what its audio stream is. Decoding follows it, whatever was asked for.
     private func applySurroundInfo(_ info: NvstAudioSurroundInfo) {
-        logger?("NVST audio-surround-info \(info.summary)")
+        // Every `0x0408`, before anything is decided from it: whether and when the seat sends it,
+        // and what it says, is what a device check reads.
+        onAudioDiagnostic?("seat surround info (0x0408): \(info.summary)")
         guard let layout = NvstAudioLayout(info) else {
             onAudioDiagnostic?("surround info ignored, not a layout this client knows: \(info.summary)")
             return
@@ -642,7 +644,12 @@ public final class NvstNativeBundle: @unchecked Sendable {
         }
         if handleSessionLimitCommand(command) { return }
         if command.code == NvstAudioSurroundInfo.commandCode {
-            if let info = NvstAudioSurroundInfo.parse(command) { applySurroundInfo(info) }
+            if let info = NvstAudioSurroundInfo.parse(command) {
+                applySurroundInfo(info)
+            } else {
+                onAudioDiagnostic?("seat surround info (0x0408) unreadable: "
+                    + command.payload.map { String(format: "%02x", $0) }.joined())
+            }
             return
         }
         guard let cursor = NvstRemoteCursor.from(command) else { return }
