@@ -34,7 +34,7 @@
 
 - Plays your GeForce NOW library on the TV, with hardware video decoding.
 - A console-style home screen made for the Siri Remote and game controllers. Sign in by scanning a QR code with your phone.
-- 120 Hz at 1080p and 1440p, HDR, and 5.1 or 7.1 surround sound when your TV or receiver supports it.
+- [120 Hz](#play-at-120-hz) at 1080p and 1440p, HDR, and 5.1 or 7.1 surround sound when your TV or receiver supports it.
 - PlayStation, Xbox and other controllers, up to four players. DualSense pads show PlayStation button prompts and rumble.
 - Your running and recently played games on the Apple TV Home screen (Top Shelf).
 
@@ -49,6 +49,14 @@ The full list, with known limits, is in the [Apple TV app README](ios/OpenNOWtvO
 - Your own **GeForce NOW account**.
 
 There is no App Store or TestFlight version. You install the app on your own Apple TV from your Mac. It takes about 20 minutes the first time.
+
+### Tested on
+
+| Apple TV | tvOS | TV | 120 Hz | HDR10 | Surround | Controller |
+|---|---|---|---|---|---|---|
+| Apple TV 4K (4th generation), Ethernet | 27.2 | TCL C8L | ✅ 1440p and 1080p | ✅ | ✅ 7.1 (measured, not heard on a receiver) | ✅ DualSense |
+
+Other Apple TV models and TVs should work but have not been tried. If yours works or doesn't, please [say so in an issue](https://github.com/Lacrowx/OpenNOW/issues) so it can be added here.
 
 ## Install it (3 steps)
 
@@ -107,6 +115,32 @@ That's it. OpenNOW is now on your Apple TV's Home screen.
 - **Unsigned IPA:** each [release](https://github.com/Lacrowx/OpenNOW/releases) has an unsigned `.ipa` for sideloading tools that sign it with your own Apple ID. It has not been tried with any sideloading tool yet, so the installer above is the tested way.
 
 </details>
+
+## Play at 120 Hz
+
+The Apple TV can send 120 Hz to the TV only below 4K: at **1440p** or **1080p**. OpenNOW switches the TV to that mode by itself when a 120 fps stream starts, and back when you leave.
+
+You need:
+
+- A **GeForce NOW Ultimate** membership. Other tiers stream at up to 60 fps.
+- A TV that accepts **120 Hz over HDMI**. On many TVs only some HDMI ports do (often labelled 4K@120 or HDMI 2.1), and some need an enhanced HDMI signal setting turned on for that port in the TV's menu.
+
+Then, in OpenNOW:
+
+1. Open **Settings → Stream**.
+2. Set **Resolution** to **2560 x 1440** (or **1920 x 1080**).
+3. Set **Frame Rate** to **120 fps**.
+4. Leave **Display Mode** (under **Video**) on **Automatic**.
+
+Start a game. The TV's own info screen should now show 120 Hz. HDR works at 120 Hz too.
+
+Good to know:
+
+- **4K at 120 fps does not work.** The Apple TV has no 4K 120 Hz mode, so the TV stays at 60 Hz, and in testing a 4K 120 fps stream also decoded too slowly and skipped frames. Use 1440p.
+- **Keep 120 Hz in the menus too:** pick a mode ending in **120 Hz** under **Display Mode** instead of Automatic. If the TV shows a black screen, wait 15 seconds and the old mode comes back.
+- **When you leave the app:** **When You Leave the App** (next to Display Mode) decides whether the TV goes back to its own mode at once, after a short break (the default), or stays at the app's mode.
+- Use a wired network if you can. 120 fps sends twice as many frames, so Wi-Fi hiccups show up more.
+
 
 ## Problems and ideas
 
