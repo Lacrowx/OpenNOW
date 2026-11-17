@@ -43,7 +43,7 @@ enum TVDisplayMode {
 
     /// The modes the connected TV offers, largest and fastest first.
     static var choices: [Choice] {
-        guard let modes = tvOut()?.value(forKey: "availableModes") as? [NSObject] else { return [] }
+        guard let modes = tvOut().flatMap { property($0, "availableModes") } as? [NSObject] else { return [] }
         return Set(modes.compactMap(choice)).sorted {
             ($0.width * $0.height, $0.refreshRate) > ($1.width * $1.height, $1.refreshRate)
         }
@@ -56,8 +56,8 @@ enum TVDisplayMode {
             selection = Choice(width: saved[0], height: saved[1], refreshRate: saved[2])
         }
         if let saved = defaults.object(forKey: pendingRestoreKey) as? NSNumber, let display = tvOut(),
-           let modes = display.value(forKey: "availableModes") as? [NSObject] {
-            original = modes.first { representation($0) == saved } ?? display.value(forKey: "preferredMode") as? NSObject
+           let modes = property(display, "availableModes") as? [NSObject] {
+            original = modes.first { representation($0) == saved } ?? property(display, "preferredMode") as? NSObject
         }
         // The system UI must not inherit the app's mode. Background, not inactive: a system alert
         // over the app would otherwise switch modes twice.
@@ -107,14 +107,14 @@ enum TVDisplayMode {
         foreground = true
         // The system's mode may have changed while the app was away. It is read again unless the
         // display still reports the mode set here, which would mean the hand-back has not registered.
-        if let current = tvOut()?.value(forKey: "currentMode") as? NSObject, !same(current, applied) { original = nil }
+        if let current = tvOut().flatMap { property($0, "currentMode") } as? NSObject, !same(current, applied) { original = nil }
         applied = nil
         update()
     }
 
     private static func update() {
-        guard foreground, let display = tvOut(), let current = display.value(forKey: "currentMode") as? NSObject,
-              let modes = display.value(forKey: "availableModes") as? [NSObject] else { return }
+        guard foreground, let display = tvOut(), let current = property(display, "currentMode") as? NSObject,
+              let modes = property(display, "availableModes") as? [NSObject] else { return }
         let system = original ?? current
         guard let mode = wantedMode(among: modes, system: system) else {
             if let original { apply(original) }
@@ -174,7 +174,7 @@ enum TVDisplayMode {
         let displays = NSSelectorFromString("displays")
         guard let type = NSClassFromString("CADisplay"), (type as AnyObject).responds(to: displays),
               let all = (type as AnyObject).perform(displays)?.takeUnretainedValue() as? [NSObject] else { return nil }
-        return all.first { ($0.value(forKey: "name") as? String) == "TVOut" }
+        return all.first { (property($0, "name") as? String) == "TVOut" }
     }
 
     private static func same(_ a: NSObject?, _ b: NSObject?) -> Bool {
@@ -185,16 +185,23 @@ enum TVDisplayMode {
     }
 
     private static func representation(_ mode: NSObject) -> NSNumber? {
-        mode.value(forKey: "internalRepresentation") as? NSNumber
+        property(mode, "internalRepresentation") as? NSNumber
     }
 
     private static func dynamicRange(_ mode: NSObject) -> String? {
-        mode.value(forKey: "hdrMode") as? String
+        property(mode, "hdrMode") as? String
     }
 
-    /// -1 for a property this OS does not have: key-value access to a missing key would abort the app.
+    /// -1 for a property this OS does not have.
     private static func number(_ object: NSObject, _ key: String) -> Double {
-        guard object.responds(to: NSSelectorFromString(key)) else { return -1 }
-        return (object.value(forKey: key) as? NSNumber)?.doubleValue ?? -1
+        (property(object, key) as? NSNumber)?.doubleValue ?? -1
+    }
+
+    /// A private property read by name, or nil when this OS does not have it. Key-value access to
+    /// a missing key raises an Objective-C exception, which Swift cannot catch, and ends the app,
+    /// so every read of QuartzCore's display objects goes through here.
+    nonisolated static func property(_ object: NSObject, _ key: String) -> Any? {
+        guard object.responds(to: NSSelectorFromString(key)) else { return nil }
+        return object.value(forKey: key)
     }
 }
