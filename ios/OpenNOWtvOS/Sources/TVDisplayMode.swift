@@ -2,7 +2,7 @@ import UIKit
 
 /// Owns the TV's display mode while OpenNOW is in the foreground: the mode fixed in Settings, or in
 /// Automatic the best mode for the stream that is playing. The system's own mode is handed back
-/// whenever neither applies and when the app leaves the foreground.
+/// whenever neither applies, and when the app leaves the foreground as `leavePolicy` says.
 ///
 /// This Apple TV lists 120 Hz modes below 4K (2560x1440, 1920x1080), but tvOS has no public way to
 /// select them: `AVDisplayManager` criteria asking for 120 Hz left the display at 60 Hz when tested.
@@ -20,6 +20,25 @@ enum TVDisplayMode {
         var label: String { "\(width) × \(height) · \(refreshRate) Hz" }
     }
 
+    /// What happens to the display mode when OpenNOW leaves the foreground.
+    enum LeavePolicy: String, CaseIterable {
+        /// The system's own mode comes back at once.
+        case restore
+        /// While a stream is held open in the background, the stream's mode stays, so coming back
+        /// in time needs no mode switch; it is handed back when that stream closes.
+        case afterBreak
+        /// The mode stays as it is, for a TV kept in, say, 1440p at 120 Hz outside the app too.
+        case keep
+
+        var label: String {
+            switch self {
+            case .restore: "Return to TV Mode"
+            case .afterBreak: "Return After a Short Break"
+            case .keep: "Keep This Mode"
+            }
+        }
+    }
+
     private struct Video {
         let fps: Int
         let width: Int
@@ -28,6 +47,9 @@ enum TVDisplayMode {
 
     /// The mode fixed in Settings; nil is Automatic.
     private(set) static var selection: Choice?
+    private(set) static var leavePolicy = LeavePolicy.afterBreak
+    /// The app left with a stream playing under `.afterBreak`; the mode goes back when it closes.
+    private static var restoreDeferred = false
     private static var video: Video?
     private static var foreground = true
     /// The system's own mode while the display is held in another one.
@@ -35,6 +57,7 @@ enum TVDisplayMode {
     private static var applied: NSObject?
     private static let defaults = UserDefaults.standard
     private static let selectionKey = "tvDisplayModeSelection"
+    private static let leavePolicyKey = "tvDisplayModeLeavePolicy"
     /// Identifies `original` across launches: tvOS keeps the held mode if the app dies in it.
     private static let pendingRestoreKey = "tvHighRefreshDisplayModeOriginal"
     private static let setCurrentMode = NSSelectorFromString("setCurrentMode:")
@@ -55,6 +78,7 @@ enum TVDisplayMode {
         if let saved = defaults.array(forKey: selectionKey) as? [Int], saved.count == 3 {
             selection = Choice(width: saved[0], height: saved[1], refreshRate: saved[2])
         }
+        if let saved = defaults.string(forKey: leavePolicyKey).flatMap(LeavePolicy.init(rawValue:)) { leavePolicy = saved }
         if let saved = defaults.object(forKey: pendingRestoreKey) as? NSNumber, let display = tvOut(),
            let modes = property(display, "availableModes") as? [NSObject] {
             original = modes.first { representation($0) == saved } ?? property(display, "preferredMode") as? NSObject
@@ -80,6 +104,11 @@ enum TVDisplayMode {
         update()
     }
 
+    static func setLeavePolicy(_ policy: LeavePolicy) {
+        leavePolicy = policy
+        defaults.set(policy.rawValue, forKey: leavePolicyKey)
+    }
+
     /// Reports the video a stream is showing; safe to call again when its format changes. Returns
     /// whether this type holds the display in a mode for it. When it does not, the display is in
     /// the system's own mode and the system's content matching may be used instead.
@@ -92,11 +121,24 @@ enum TVDisplayMode {
 
     static func streamEnded() {
         video = nil
+        if !foreground, restoreDeferred { handBack(); return }
         update()
     }
 
     private static func enteredBackground() {
         foreground = false
+        switch leavePolicy {
+        case .keep: tvStreamDebug("[TVStream] display mode kept on leaving the app")
+        case .afterBreak where video != nil && applied != nil:
+            restoreDeferred = true
+            tvStreamDebug("[TVStream] display mode kept while the stream is held")
+        default: handBack()
+        }
+    }
+
+    /// Gives the display back to the system's own mode, as the app leaves.
+    private static func handBack() {
+        restoreDeferred = false
         if let original { apply(original) }
         defaults.removeObject(forKey: pendingRestoreKey)
     }
@@ -105,6 +147,13 @@ enum TVDisplayMode {
         // Also sent at launch, when there is nothing to take back.
         guard !foreground else { return }
         foreground = true
+        let kept = restoreDeferred || leavePolicy == .keep
+        restoreDeferred = false
+        // Still in the mode set here: nothing to switch, so the picture comes back at once.
+        if kept, let current = tvOut().flatMap({ property($0, "currentMode") }) as? NSObject, same(current, applied) {
+            update()
+            return
+        }
         // The system's mode may have changed while the app was away. It is read again unless the
         // display still reports the mode set here, which would mean the hand-back has not registered.
         if let current = tvOut().flatMap { property($0, "currentMode") } as? NSObject, !same(current, applied) { original = nil }

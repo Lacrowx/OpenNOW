@@ -9,6 +9,7 @@ struct TVDisplayModeSetting: View {
     /// What to go back to while a newly chosen mode waits to be confirmed.
     @State private var previous: TVDisplayMode.Choice?
     @State private var confirming = false
+    @State private var leavePolicy = TVDisplayMode.leavePolicy
 
     var body: some View {
         TVLabeledPicker("Display Mode", selection: Binding(get: { selection }, set: choose)) {
@@ -33,7 +34,14 @@ struct TVDisplayModeSetting: View {
             revert()
         }
 
-        Text("Automatic keeps the TV's own mode in menus and matches each stream while it plays. A fixed mode is used for the whole app; HDR streams use its HDR variant when the TV has one.")
+        TVLabeledPicker("When You Leave the App", selection: Binding(get: { leavePolicy }, set: {
+            leavePolicy = $0
+            TVDisplayMode.setLeavePolicy($0)
+        })) {
+            ForEach(TVDisplayMode.LeavePolicy.allCases, id: \.self) { Text($0.label).tag($0) }
+        }
+
+        Text("Automatic keeps the TV's own mode in menus and matches each stream while it plays. A fixed mode is used for the whole app; HDR streams use its HDR variant when the TV has one. When you leave the app, the TV can return to its own mode at once, stay in the stream's mode while the stream waits about 20 seconds for you to come back, which avoids switching modes twice on a quick trip to the Home screen, or keep the app's mode, for a TV you want to stay at, say, 1440p and 120 Hz.")
             .font(.footnote).foregroundStyle(.secondary)
     }
 

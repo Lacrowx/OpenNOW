@@ -16,14 +16,19 @@ Screenshots are from the tvOS simulator with sample data.
 
 - **Streaming over native NVST.** tvOS has no WebRTC framework, so every stream uses the native NVST receiver with hardware decoding. Lost video packets are requested again from the seat instead of waiting for a keyframe.
 - **Console shell.** Home, Store, Library, Sessions and Settings are laid out for the TV and driven by the remote or a controller. It is modelled on the Qt client's console screens and uses the same fonts and icons. Sign-in uses a device code with a QR code, and the first launch walks through setup.
-- **Sessions.** Queue screen, launch conflicts, and rejoining or ending a session left over from an earlier run.
+- **Sessions.** Queue screen, launch conflicts, and rejoining or ending a session left over from an earlier run. A stream stays open for about 20 seconds after you press the TV/Home button, so coming straight back resumes the picture instead of reconnecting.
 - **In-stream menu.** Hold Options for about a second during a stream, or press Back on the Siri Remote, for stream stats, trigger feels and ending the session.
-- **120 Hz.** Apple TV 4K offers 120 Hz only below 4K (2560x1440 and 1920x1080). With a 120 fps stream the app switches the TV to a matching mode and gives the system's mode back when it leaves the foreground. You can also fix a mode in Settings.
+- **120 Hz.** Apple TV 4K offers 120 Hz only below 4K (2560x1440 and 1920x1080). With a 120 fps stream the app switches the TV to a matching mode. You can also fix a mode in Settings, and choose what the TV does when you leave the app: return to its own mode at once, after a short break (the default, so a quick trip to the Home screen needs no mode switch), or keep the app's mode.
 - **Surround sound.** With **Settings → Sound** on Automatic, a stream asks the seat for 5.1 or 7.1 when the TV or receiver reports that many channels, and stays stereo otherwise. The stream menu shows the format in use. If the output changes to a stereo one during a stream, surround is folded down to stereo.
 - **DualSense.** When the seat supports it, a DualSense is sent to the seat as a DualShock 4 HID device, so games can show PlayStation button prompts, and rumble comes back to the pad. Other controllers are sent as Xbox-style pads.
   - On Steam games, prompts may stay Xbox until Steam's **Settings → Controller → PlayStation Controller Support** is set to **Not Enabled** on the host.
   - **DualSense trigger effects** (Settings → Input → Controller → Experimental) offers the pad to the seat as a DualSense. The seats tested so far refused it, and the pad falls back to the DualShock 4 route. There is a page there that plays each trigger effect locally.
   - **Trigger feels per game** (Off, Soft or Firm Resistance, Weapon Trigger, for L2 and R2) are chosen in the in-stream menu and remembered per game. They apply while the seat only knows the pad as a DualShock 4.
+  - **Motion controls** (Settings → Input → Controller → Motion, off by default) send a PS5 controller's gyroscope and accelerometer to the game while the seat takes the pad as a PlayStation controller.
+  - **Couch co-op.** Up to four controllers are sent to the seat, and each pad's player lights show its player number.
+- **Top Shelf.** The row above OpenNOW on the Apple TV Home screen shows the game still running and your recently played games; selecting one starts or rejoins it. The app and its Top Shelf extension share an app group, which a free personal team can sign.
+- **Idle streams** (Settings → Interface → Sessions & Queue, off by default). After 10 to 60 minutes without input, a one-minute "Still playing?" countdown appears; when it runs out the app leaves the stream or ends the session, as chosen.
+- **Stream conditions.** The stream menu shows Wi-Fi or Ethernet, the audio output with its delay (Audio Output), and each controller's battery. A short notice points out Bluetooth or AirPlay sound that runs noticeably late, Wi-Fi that keeps losing packets, and a controller at 15% or 5%. The session report names the network, and a Wi-Fi session with loss suggests Ethernet.
 
 ## Known limits
 
@@ -116,6 +121,8 @@ xcodebuild test -project ios/OpenNOWtvOS/OpenNOWtvOS.xcodeproj -scheme OpenNOWtv
 ios/OpenNOWtvOS/
 ├── project.yml        XcodeGen spec: builds ../OpenNOWiOS/OpenNOWiOS sources plus Sources/ for tvOS
 ├── Sources/           tvOS-only code: stream coordinator and view, display modes, console shell
+├── TopShelf/          Top Shelf extension (recent and running games)
+├── Shared/            code built into both the app and the Top Shelf extension
 ├── Tests/             tests for the tvOS-only code
 ├── Resources/         fonts (SIL Open Font License 1.1, license texts alongside)
 ├── TVAssets.xcassets  app icon and top shelf image
