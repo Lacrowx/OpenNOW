@@ -30,6 +30,18 @@ public enum NvstCoreAudioFormat {
         return supported
     }
 
+    /// The value to write to the audio session's preferred output channel count, or nil to leave
+    /// it alone. The preference belongs to the app's one audio session and outlives any device:
+    /// a stereo stream never touches it, a surround stream raises it to what the route carries,
+    /// and it is put back to 2 afterwards. A value it already has is not written again, because
+    /// writing it can cause a route change, and a route change reopens the device.
+    public static func preferredOutputChannelChange(requested: Int, routeMaximum: Int,
+                                                    raisedEarlier: Bool, current: Int) -> Int? {
+        guard requested > 2 || raisedEarlier else { return nil }
+        let wanted = requested > 2 ? min(requested, max(2, routeMaximum)) : 2
+        return wanted == current ? nil : wanted
+    }
+
     public static func captureChannelCount(deviceChannels: Int) -> Int {
         max(1, min(2, deviceChannels))
     }

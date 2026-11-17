@@ -27,8 +27,8 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
     /// The channel count the output unit was opened with: the requested count when the route
     /// carries it, otherwise 2.
     public private(set) var outputChannels = 2
-    /// Called on the device's queue each time the output has (re)opened, with the speaker of each
-    /// device channel.
+    /// Called on the device's queue each time the output is about to open or reopen, before the
+    /// first render callback in the new format, with the speaker of each device channel.
     public var onPlayoutFormatChange: (@Sendable (_ speakers: [NvstSpeaker?]) -> Void)?
     private var requestedPlayoutChannels: Int
     private var raisedPreferredChannels = false
@@ -87,7 +87,13 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
         queue.sync {
             wantsRunning = false
             stopLocked()
-            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+            let session = AVAudioSession.sharedInstance()
+            // The next stream starts from the preference a stereo stream expects.
+            if raisedPreferredChannels {
+                try? session.setPreferredOutputNumberOfChannels(2)
+                raisedPreferredChannels = false
+            }
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
         }
     }
 
@@ -142,20 +148,18 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
                 options: capturesMicrophone ? microphoneOptions : [])
             try session.setPreferredSampleRate(outputSampleRate)
             try session.setPreferredIOBufferDuration(0.005)
-            // Stereo sessions leave the session's channel preference alone, as they always have;
-            // it is only put back to 2 after a surround stream raised it.
-            if requestedPlayoutChannels > 2 {
-                try? session.setPreferredOutputNumberOfChannels(
-                    min(requestedPlayoutChannels, session.maximumOutputNumberOfChannels))
-                raisedPreferredChannels = true
-            } else if raisedPreferredChannels {
-                try? session.setPreferredOutputNumberOfChannels(2)
-                raisedPreferredChannels = false
-            }
             if capturesMicrophone, let uid = preferredInputDeviceUID {
                 try session.setPreferredInput(session.availableInputs?.first { $0.uid == uid })
             }
             try session.setActive(true)
+            // On the active session, and only when the value changes: see
+            // `NvstCoreAudioFormat.preferredOutputChannelChange`.
+            if let channels = NvstCoreAudioFormat.preferredOutputChannelChange(
+                requested: requestedPlayoutChannels, routeMaximum: session.maximumOutputNumberOfChannels,
+                raisedEarlier: raisedPreferredChannels, current: session.preferredOutputNumberOfChannels) {
+                try? session.setPreferredOutputNumberOfChannels(channels)
+            }
+            raisedPreferredChannels = requestedPlayoutChannels > 2
             inputChannels = max(1, min(2, session.inputNumberOfChannels))
             outputChannels = max(2, NvstCoreAudioFormat.playoutChannelCount(
                 requested: requestedPlayoutChannels, deviceChannels: session.outputNumberOfChannels))
@@ -194,15 +198,23 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
                 try check(AudioUnitSetProperty(created, kAudioOutputUnitProperty_SetInputCallback,
                     kAudioUnitScope_Global, 1, &capture, UInt32(MemoryLayout<AURenderCallbackStruct>.size)))
             }
+            // Before the unit can render: whoever places channels on this output must know its
+            // format before the first callback asks for samples in it.
+            onPlayoutFormatChange?(speakers)
             try check(AudioUnitInitialize(created))
             try check(AudioOutputUnitStart(created))
             isPlayoutRunning = true
             isCaptureRunning = capturesMicrophone
             lastStartStatus = noErr
-            onPlayoutFormatChange?(speakers)
         } catch {
             if lastStartStatus == noErr { lastStartStatus = kAudio_ParamError }
             stopLocked()
+            // A route that refuses the surround format still plays: reopen in stereo, and the
+            // layout is folded down to it.
+            if requestedPlayoutChannels > 2 {
+                requestedPlayoutChannels = 2
+                startLocked()
+            }
         }
     }
 

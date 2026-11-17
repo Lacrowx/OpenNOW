@@ -412,8 +412,11 @@ public final class NvstNativeBundle: @unchecked Sendable {
                                          capturesMicrophone: microphoneSetup != nil,
                                          preferredInputDeviceUID: microphoneSetup?.deviceUniqueID)
         device.onPlayoutFormatChange = { [weak self] speakers in self?.devicePlayoutFormatChanged(speakers) }
-        device.fillPlayout = { [weak self] destination, sampleCount in
-            guard let self, let pipeline = receivePipeline, let placement = currentAudioPlacement,
+        device.fillPlayout = { [weak self, weak device] destination, sampleCount in
+            // The placement has to be the one made for the format the device is rendering right
+            // now; any other would take the wrong amount of audio and put it on the wrong channels.
+            guard let self, let device, let pipeline = receivePipeline, let placement = currentAudioPlacement,
+                  placement.deviceChannels == device.outputChannels,
                   placement.deviceChannels > 0, sampleCount % placement.deviceChannels == 0 else {
                 destination.update(repeating: 0, count: sampleCount)
                 return
@@ -478,10 +481,14 @@ public final class NvstNativeBundle: @unchecked Sendable {
     }
 
     private func refreshAudioPlacement() {
-        let layout = receivePipeline?.layout
+        // The layout is read inside the lock: this runs on the transport's queue and on the
+        // device's, and a layout read outside it could be written back after a newer one. The
+        // pipeline never takes this lock, so the order (this lock, then the pipeline's) is safe.
         audioStateLock.lock()
-        audioPlacement = layout.map { NvstAudioPlacement(layout: $0, deviceSpeakers: deviceSpeakers) }
-        audioStateLock.unlock()
+        defer { audioStateLock.unlock() }
+        audioPlacement = receivePipeline?.layout.map {
+            NvstAudioPlacement(layout: $0, deviceSpeakers: deviceSpeakers)
+        }
     }
 
     /// The seat says what its audio stream is. Decoding follows it, whatever was asked for.
@@ -522,8 +529,9 @@ public final class NvstNativeBundle: @unchecked Sendable {
     public func takeAudioChannelLevels() -> String {
         #if DEBUG
         audioStateLock.lock()
-        defer { audioStateLock.unlock() }
-        return NvstAudioChannelMeter.summary(channelMeter.take())
+        let readings = channelMeter.take()
+        audioStateLock.unlock()
+        return NvstAudioChannelMeter.summary(readings)
         #else
         return ""
         #endif
