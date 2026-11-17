@@ -29,6 +29,10 @@ public final class NvstAudioReceivePipeline: @unchecked Sendable {
         public var datagramBytes: UInt64 = 0
         /// Interleaved samples the decoder actually produced.
         public var decodedSamples: UInt64 = 0
+        /// Decoded samples dropped because more audio had piled up than is worth playing late.
+        public var trimmedSamples: UInt64 = 0
+        /// How many times that happened.
+        public var backlogTrims: UInt64 = 0
         public var ssrc: UInt32?
     }
 
@@ -46,6 +50,12 @@ public final class NvstAudioReceivePipeline: @unchecked Sendable {
     /// How long a pending pipeline waits for the seat's layout once audio is arriving. The official
     /// client also treats a missing answer as stereo.
     public static let pendingTimeoutNanoseconds: UInt64 = 2_000_000_000
+    /// Decoded audio waiting beyond what a pull takes, above which the oldest is dropped: 30 ms.
+    public static let backlogHighWaterFrames = 1_440
+    /// What such a cut leaves waiting: 10 ms.
+    public static let backlogTargetFrames = 480
+    /// The fade-in after a cut, so it does not click: 2.5 ms.
+    public static let trimFadeFrames = 120
 
     public let framesPerPacket: Int
     /// Called once, off the pipeline's lock, when the wait ran out and stereo was chosen.
@@ -94,6 +104,17 @@ public final class NvstAudioReceivePipeline: @unchecked Sendable {
     /// divides one by the other for its A/V reading, exactly as it did over libwebrtc's counters.
     public var jitterBufferDwellSeconds: TimeInterval { lock.withLock { jitter.jitterBufferDelaySeconds } }
     public var jitterBufferEmittedCount: UInt64 { lock.withLock { jitter.jitterBufferEmittedCount } }
+
+    /// Audio received but not yet handed to the device: decoded samples waiting plus the packets
+    /// in the jitter buffer. Zero while nothing is being decoded.
+    public var backlogSeconds: TimeInterval {
+        lock.lock()
+        defer { lock.unlock() }
+        guard case .decoding(let layout) = currentState else { return 0 }
+        let waitingFrames = (bufferedSamples.count - sampleOffset) / layout.channels
+            + jitter.bufferedCount * framesPerPacket
+        return Double(waitingFrames) / NvstOpusDecoder.sampleRate
+    }
 
     /// Starts decoding `layout`, replacing whatever was decoded before; audio already buffered for
     /// the old layout is dropped. Throws when no decoder can be built, and the pipeline is then
@@ -216,9 +237,31 @@ public final class NvstAudioReceivePipeline: @unchecked Sendable {
             sampleOffset = 0
         }
         bufferedSamples.append(contentsOf: drain(jitter.advance()))
+        trimBacklogLocked(beyond: frames, channels: channels)
         let count = min(frames * channels, bufferedSamples.count)
         sampleOffset = count
         return Array(bufferedSamples.prefix(count))
+    }
+
+    /// Drops the oldest decoded audio when more is waiting than is worth playing late.
+    ///
+    /// The jitter buffer releases everything beyond its depth at once, and the device takes a
+    /// fixed amount per pull. So when packets arrive late — a network hiccup, or the output
+    /// restarting after a route change — the device plays silence meanwhile, the late packets then
+    /// all arrive, and without this every one of them would still be played: the sound would stay
+    /// behind the picture by the length of the stall for the rest of the session.
+    private func trimBacklogLocked(beyond frames: Int, channels: Int) {
+        let waitingFrames = bufferedSamples.count / channels - frames
+        guard waitingFrames > Self.backlogHighWaterFrames else { return }
+        let droppedSamples = (waitingFrames - Self.backlogTargetFrames) * channels
+        bufferedSamples.removeFirst(droppedSamples)
+        let fadeFrames = min(Self.trimFadeFrames, bufferedSamples.count / channels)
+        for frame in 0..<fadeFrames {
+            let gain = Float(frame) / Float(Self.trimFadeFrames)
+            for channel in 0..<channels { bufferedSamples[frame * channels + channel] *= gain }
+        }
+        counters.trimmedSamples &+= UInt64(droppedSamples)
+        counters.backlogTrims += 1
     }
 
     /// Emits everything still held; the stream is ending, so nothing should be left behind.

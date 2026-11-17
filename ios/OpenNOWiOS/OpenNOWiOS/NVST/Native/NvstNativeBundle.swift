@@ -529,6 +529,12 @@ public final class NvstNativeBundle: @unchecked Sendable {
         #endif
     }
 
+    /// How much audio is waiting to be played and how often a pile-up was cut back; nil before
+    /// the audio has started.
+    public var audioBacklog: (seconds: Double, trims: UInt64)? {
+        receivePipeline.map { ($0.backlogSeconds, $0.snapshot.backlogTrims) }
+    }
+
     /// "Stereo", "5.1" or "7.1" as decoded, with a note while it is folded to stereo; nil until
     /// the audio has started and the seat's layout is known.
     public var audioFormatLabel: String? {
