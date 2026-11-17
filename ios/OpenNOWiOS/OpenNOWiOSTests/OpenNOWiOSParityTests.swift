@@ -2073,7 +2073,7 @@ final class OpenNOWiOSParityTests: XCTestCase {
         format.chroma = .yuv420
         XCTAssertEqual(NvstVideoToolboxDecoder.outputPixelFormatRequests(for: format,
             requiresTenBit444: false, sourceIsFullRange: false),
-            [[kCVPixelFormatType_420YpCbCr10BiPlanarFullRange]])
+            [[kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange], [kCVPixelFormatType_420YpCbCr10BiPlanarFullRange]])
     }
 
     func testPresentationTrackerKeepsRatesDuringConcurrentSnapshots() throws {

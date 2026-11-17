@@ -93,33 +93,42 @@ extension NvstVideoToolboxDecoder {
         }
     }
 
-    static func preferredOutputPixelFormats(for format: BitstreamFormat, requiresTenBit444: Bool = false) -> [OSType] {
-        if requiresTenBit444 {
-            return [kCVPixelFormatType_444YpCbCr10BiPlanarFullRange, kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange]
+    /// The surfaces to ask for, best first: the stream's own chroma layout before 4:2:0, and
+    /// within a layout the stream's own range before the other one. Depth is never given up.
+    ///
+    /// The range order is a decode-time matter, not a colour one — every renderer reads both.
+    /// A surface in the other range makes VideoToolbox convert each frame: on an Apple TV 4K
+    /// (AppleTV18,1), 2560x1440 at 120 fps, that took 5.1–5.4 ms a frame against 3.1–3.2 ms
+    /// for 4:2:0 (H.264, HEVC and AV1, 8- and 10-bit alike) and 7.5 ms against 5.3 ms for 4:4:4
+    /// (measured 2026-11-17).
+    static func preferredOutputPixelFormats(for format: BitstreamFormat, requiresTenBit444: Bool = false,
+                                            sourceIsFullRange: Bool = true) -> [OSType] {
+        func bothRanges(_ full: OSType, _ video: OSType) -> [OSType] {
+            sourceIsFullRange ? [full, video] : [video, full]
         }
-        let fallback = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-        var preferred: [OSType] = []
+        let tenBit444 = bothRanges(kCVPixelFormatType_444YpCbCr10BiPlanarFullRange, kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange)
+        if requiresTenBit444 { return tenBit444 }
+        let tenBit420 = bothRanges(kCVPixelFormatType_420YpCbCr10BiPlanarFullRange, kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
+        let eightBit420 = bothRanges(kCVPixelFormatType_420YpCbCr8BiPlanarFullRange, kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
         switch (format.chroma, format.isTenBit) {
-        case (.yuv444, true): preferred = [kCVPixelFormatType_444YpCbCr10BiPlanarFullRange, kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange, kCVPixelFormatType_420YpCbCr10BiPlanarFullRange]
-        case (.yuv444, false): preferred = [kCVPixelFormatType_444YpCbCr8BiPlanarFullRange]
-        case (.yuv422, true): preferred = [kCVPixelFormatType_422YpCbCr10BiPlanarFullRange, kCVPixelFormatType_420YpCbCr10BiPlanarFullRange]
-        case (.yuv422, false): preferred = [kCVPixelFormatType_422YpCbCr8BiPlanarFullRange]
-        case (_, true): preferred = [kCVPixelFormatType_420YpCbCr10BiPlanarFullRange]
-        default: preferred = []
+        case (.yuv444, true): return tenBit444 + tenBit420
+        case (.yuv444, false): return bothRanges(kCVPixelFormatType_444YpCbCr8BiPlanarFullRange, kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange) + eightBit420
+        case (.yuv422, true): return bothRanges(kCVPixelFormatType_422YpCbCr10BiPlanarFullRange, kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange) + tenBit420
+        case (.yuv422, false): return bothRanges(kCVPixelFormatType_422YpCbCr8BiPlanarFullRange, kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange) + eightBit420
+        case (_, true): return tenBit420
+        default: return eightBit420
         }
-        return format.isTenBit ? preferred : preferred + [fallback]
     }
 
-    /// Offer both compatible 4:4:4 ranges together so VideoToolbox can choose its
-    /// preferred output, rather than forcing a range conversion. Single-format requests
-    /// remain a fallback for decoders that decline a Core Video format array.
+    /// One request per session-creation attempt. Strict 4:4:4 first offers both ranges together
+    /// so VideoToolbox can choose; everything else is asked for one surface at a time, in
+    /// `preferredOutputPixelFormats` order, because VideoToolbox grants the first one it is
+    /// asked for even when that means converting every frame.
     static func outputPixelFormatRequests(for format: BitstreamFormat, requiresTenBit444: Bool,
                                          sourceIsFullRange: Bool) -> [[OSType]] {
-        var candidates = preferredOutputPixelFormats(for: format, requiresTenBit444: requiresTenBit444)
-        if requiresTenBit444 {
-            if !sourceIsFullRange { candidates.reverse() }
-            return [candidates] + candidates.map { [$0] }
-        }
+        let candidates = preferredOutputPixelFormats(for: format, requiresTenBit444: requiresTenBit444,
+                                                     sourceIsFullRange: sourceIsFullRange)
+        if requiresTenBit444 { return [candidates] + candidates.map { [$0] } }
         return candidates.map { [$0] }
     }
 
