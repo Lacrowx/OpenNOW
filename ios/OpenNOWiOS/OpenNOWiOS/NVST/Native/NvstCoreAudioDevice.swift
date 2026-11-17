@@ -24,7 +24,14 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
     }
     public private(set) var isPlayoutRunning = false
     public private(set) var isCaptureRunning = false
-    public let outputChannels = 2
+    /// The channel count the output unit was opened with: the requested count when the route
+    /// carries it, otherwise 2.
+    public private(set) var outputChannels = 2
+    /// Called on the device's queue each time the output has (re)opened, with the speaker of each
+    /// device channel.
+    public var onPlayoutFormatChange: (@Sendable (_ speakers: [NvstSpeaker?]) -> Void)?
+    private var requestedPlayoutChannels: Int
+    private var raisedPreferredChannels = false
     public private(set) var inputChannels = 1
     public let outputSampleRate = 48_000.0
     public let inputSampleRate = 48_000.0
@@ -46,6 +53,7 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
 
     public init(playoutChannelCount: Int = 2, capturesMicrophone: Bool = false,
                 monitorsDefaultOutputDevice: Bool = true, preferredInputDeviceUID: String? = nil) {
+        requestedPlayoutChannels = NvstCoreAudioFormat.supportedPlayoutChannelCount(playoutChannelCount)
         self.capturesMicrophone = capturesMicrophone
         self.preferredInputDeviceUID = preferredInputDeviceUID
         if monitorsDefaultOutputDevice {
@@ -91,6 +99,18 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
         }
     }
 
+    /// Reopens the output for another channel count: the seat names its layout only after the
+    /// device has started.
+    public func setPlayoutChannelCount(_ count: Int) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let supported = NvstCoreAudioFormat.supportedPlayoutChannelCount(count)
+            guard supported != requestedPlayoutChannels else { return }
+            requestedPlayoutChannels = supported
+            if wantsRunning { stopLocked(); startLocked() }
+        }
+    }
+
     public var captureDeviceState: (uniqueID: String?, isFallback: Bool) {
         let actual = AVAudioSession.sharedInstance().currentRoute.inputs.first?.uid
         return (actual, preferredInputDeviceUID.map { $0 != actual } ?? false)
@@ -122,11 +142,25 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
                 options: capturesMicrophone ? microphoneOptions : [])
             try session.setPreferredSampleRate(outputSampleRate)
             try session.setPreferredIOBufferDuration(0.005)
+            // Stereo sessions leave the session's channel preference alone, as they always have;
+            // it is only put back to 2 after a surround stream raised it.
+            if requestedPlayoutChannels > 2 {
+                try? session.setPreferredOutputNumberOfChannels(
+                    min(requestedPlayoutChannels, session.maximumOutputNumberOfChannels))
+                raisedPreferredChannels = true
+            } else if raisedPreferredChannels {
+                try? session.setPreferredOutputNumberOfChannels(2)
+                raisedPreferredChannels = false
+            }
             if capturesMicrophone, let uid = preferredInputDeviceUID {
                 try session.setPreferredInput(session.availableInputs?.first { $0.uid == uid })
             }
             try session.setActive(true)
             inputChannels = max(1, min(2, session.inputNumberOfChannels))
+            outputChannels = max(2, NvstCoreAudioFormat.playoutChannelCount(
+                requested: requestedPlayoutChannels, deviceChannels: session.outputNumberOfChannels))
+            let labels = session.currentRoute.outputs.first?.channels?.map(\.channelLabel) ?? []
+            let speakers = NvstAudioPlacement.speakers(forChannelLabels: labels, channelCount: outputChannels)
             var description = AudioComponentDescription(componentType: kAudioUnitType_Output,
                 componentSubType: kAudioUnitSubType_RemoteIO, componentManufacturer: kAudioUnitManufacturer_Apple,
                 componentFlags: 0, componentFlagsMask: 0)
@@ -141,7 +175,7 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
             var enabled: UInt32 = capturesMicrophone ? 1 : 0
             try check(AudioUnitSetProperty(created, kAudioOutputUnitProperty_EnableIO,
                 kAudioUnitScope_Input, 1, &enabled, UInt32(MemoryLayout<UInt32>.size)))
-            var output = NvstCoreAudioFormat.linear16Format(sampleRate: outputSampleRate, channels: 2)
+            var output = NvstCoreAudioFormat.linear16Format(sampleRate: outputSampleRate, channels: UInt32(outputChannels))
             try check(AudioUnitSetProperty(created, kAudioUnitProperty_StreamFormat,
                 kAudioUnitScope_Input, 0, &output, UInt32(MemoryLayout<AudioStreamBasicDescription>.size)))
             var callback = AURenderCallbackStruct(inputProc: nvstIOSPlayout,
@@ -165,6 +199,7 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
             isPlayoutRunning = true
             isCaptureRunning = capturesMicrophone
             lastStartStatus = noErr
+            onPlayoutFormatChange?(speakers)
         } catch {
             if lastStartStatus == noErr { lastStartStatus = kAudio_ParamError }
             stopLocked()
@@ -192,18 +227,19 @@ public final class NvstCoreAudioDevice: @unchecked Sendable {
     fileprivate func render(_ frames: UInt32, output: UnsafeMutablePointer<AudioBufferList>?) -> OSStatus {
         guard let output else { return noErr }
         let buffers = UnsafeMutableAudioBufferListPointer(output)
+        let sampleCount = Int(frames) * outputChannels
         guard let first = buffers.first, buffers.count == 1, let base = first.mData,
-              first.mDataByteSize >= frames * 4 else {
+              Int(first.mDataByteSize) >= sampleCount * 2 else {
             for buffer in buffers {
                 if let data = buffer.mData { memset(data, 0, Int(buffer.mDataByteSize)) }
             }
             return noErr
         }
         let samples = base.assumingMemoryBound(to: Int16.self)
-        if let fillPlayout { fillPlayout(samples, Int(frames) * 2) }
-        else { samples.update(repeating: 0, count: Int(frames) * 2) }
-        onGameAudio?(UnsafeRawPointer(output), frames, outputSampleRate, 2)
-        if isPlayoutMuted { memset(base, 0, Int(frames) * 4) }
+        if let fillPlayout { fillPlayout(samples, sampleCount) }
+        else { samples.update(repeating: 0, count: sampleCount) }
+        onGameAudio?(UnsafeRawPointer(output), frames, outputSampleRate, UInt32(outputChannels))
+        if isPlayoutMuted { memset(base, 0, sampleCount * 2) }
         return noErr
     }
 

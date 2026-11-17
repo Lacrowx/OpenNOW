@@ -99,6 +99,8 @@ public final class NvstNativeBundle: @unchecked Sendable {
     public var onMicrophoneDeviceFallback: (@Sendable (NvstCaptureDeviceChange) -> Void)?
     /// A microphone was plugged in or taken away, so the picker's rows are stale.
     public var onMicrophoneDeviceListChange: (@Sendable () -> Void)?
+    /// Audio events worth one log line each: the seat's layout, a fallback, the output's format.
+    public var onAudioDiagnostic: (@Sendable (String) -> Void)?
 
     // MARK: - State
 
@@ -114,9 +116,8 @@ public final class NvstNativeBundle: @unchecked Sendable {
     /// seat's virtual mic meter dead even though packets leave the host.
     private static let microphoneFramesPerPacket = 480
     private static let microphoneChannels = 2
-    /// The native audio decode is stereo regardless of the surround preference; see `startAudioDevice`.
-    private static let decodedAudioChannels = 2
 
+    /// The channel count asked for until the seat's layout is known, then the count being decoded.
     public private(set) var audioChannelCount: Int
     public private(set) var inputProtocolVersion: UInt16?
     public private(set) var microphoneSenderSsrc: UInt32?
@@ -143,6 +144,16 @@ public final class NvstNativeBundle: @unchecked Sendable {
     private var receivePipeline: NvstAudioReceivePipeline?
     private var sendPipeline: NvstAudioSendPipeline?
     private var audioDevice: NvstCoreAudioDevice?
+    /// What ANNOUNCE asked the seat for. The seat's `0x0408` decides what is decoded.
+    private var requestedAudioChannelCount = 2
+    /// Guards the three values below: they are written on the transport's and the device's queues
+    /// and read on the render thread.
+    private let audioStateLock = NSLock()
+    private var deviceSpeakers: [NvstSpeaker?] = [.frontLeft, .frontRight]
+    private var audioPlacement: NvstAudioPlacement?
+    #if DEBUG
+    private var channelMeter = NvstAudioChannelMeter()
+    #endif
     private var isClosed = false
     private var lastChannelOpenError: String?
     private var hasLoggedChannelOpens = false
@@ -179,6 +190,7 @@ public final class NvstNativeBundle: @unchecked Sendable {
     /// to the RTSP negotiator, which keeps using `NvstBundleReserving`.
     public func prepare(microphone: MicrophoneSetup?, audioChannelCount: Int) async throws -> Identity {
         self.audioChannelCount = NvstCoreAudioFormat.supportedPlayoutChannelCount(audioChannelCount)
+        requestedAudioChannelCount = self.audioChannelCount
         self.microphoneSetup = microphone
         // ANNOUNCE goes out before the DTLS handshake can key a send pipeline, so whether the mic is
         // carried and the SSRC its RTP arrives with must be known now. The SSRC is deterministic, so
@@ -363,8 +375,13 @@ public final class NvstNativeBundle: @unchecked Sendable {
             let directions = NvstAudioSrtpDirection.directions(from: keys)
             receivePipeline = try NvstAudioReceivePipeline(
                 srtp: try NvstAudioSrtp(masterKey: directions.inbound.key, masterSalt: directions.inbound.salt, profile: profile),
-                framesPerPacket: Self.decodedAudioFramesPerPacket
+                framesPerPacket: Self.decodedAudioFramesPerPacket,
+                // A surround request waits for the seat to say what it sends.
+                layout: requestedAudioChannelCount > 2 ? nil : .stereo
             )
+            receivePipeline?.onPendingTimeout = { [weak self] in
+                self?.audioLayoutSettled("the seat sent no surround info within 2 s; decoding stereo")
+            }
             sendPipeline = nil
             if let microphone {
                 let send = try NvstAudioSendPipeline(
@@ -388,25 +405,28 @@ public final class NvstNativeBundle: @unchecked Sendable {
     }
 
     private func startAudioDevice() {
-        // The native decode is stereo end to end: the Opus decoder, the jitter buffer and the
-        // receive pipeline all carry two channels. The device is therefore asked for stereo (its
-        // own device may still fall to mono), and the fill maps the stereo decode onto whatever
-        // channel count the hardware settled on rather than letting a wider layout misread it.
-        let device = NvstCoreAudioDevice(playoutChannelCount: Self.decodedAudioChannels,
+        // The device opens for the layout in use (stereo while the seat's answer is outstanding)
+        // and is reopened when that changes. `audioPlacement` maps the decode onto whatever the
+        // device was given.
+        let device = NvstCoreAudioDevice(playoutChannelCount: receivePipeline?.layout?.channels ?? 2,
                                          capturesMicrophone: microphoneSetup != nil,
                                          preferredInputDeviceUID: microphoneSetup?.deviceUniqueID)
-        let outputChannels = device.outputChannels
+        device.onPlayoutFormatChange = { [weak self] speakers in self?.devicePlayoutFormatChanged(speakers) }
         device.fillPlayout = { [weak self] destination, sampleCount in
-            guard let pipeline = self?.receivePipeline else {
+            guard let self, let pipeline = receivePipeline, let placement = currentAudioPlacement,
+                  placement.deviceChannels > 0, sampleCount % placement.deviceChannels == 0 else {
                 destination.update(repeating: 0, count: sampleCount)
                 return
             }
-            let frames = sampleCount / max(1, outputChannels)
-            let stereo = pipeline.pull(frames: frames, channels: Self.decodedAudioChannels)
-            let samples = NvstCoreAudioFormat.interleavedSamples(fromStereo: stereo, frames: frames, outputChannels: outputChannels)
-            let count = min(samples.count, sampleCount)
-            for index in 0..<count { destination[index] = samples[index] }
-            if count < sampleCount { destination.advanced(by: count).update(repeating: 0, count: sampleCount - count) }
+            let frames = sampleCount / placement.deviceChannels
+            let decoded = pipeline.pull(frames: frames, channels: placement.sourceChannels)
+            #if DEBUG
+            if placement.sourceChannels > 2 { meterAudio(decoded, channels: placement.sourceChannels) }
+            #endif
+            let samples = placement.render(decoded, frames: frames)
+            samples.withUnsafeBufferPointer { buffer in
+                if let base = buffer.baseAddress { destination.update(from: base, count: min(buffer.count, sampleCount)) }
+            }
         }
         device.onGameAudio = { [weak self] pointer, frames, rate, channels in
             self?.onGameAudioFrame?(pointer, frames, rate, channels)
@@ -436,10 +456,93 @@ public final class NvstNativeBundle: @unchecked Sendable {
             }
         }
         audioDevice = device
+        refreshAudioPlacement()
         logger?("NVST native audio device playout=\(device.isPlayoutRunning) capture=\(device.isCaptureRunning)"
                 + " outRate=\(Int(device.outputSampleRate)) outChannels=\(device.outputChannels)"
                 + " inRate=\(Int(device.inputSampleRate)) inChannels=\(device.inputChannels)"
                 + " latencyMs=\(Int((device.outputPathLatencySeconds * 1000).rounded()))")
+    }
+
+    private var currentAudioPlacement: NvstAudioPlacement? {
+        audioStateLock.lock()
+        defer { audioStateLock.unlock() }
+        return audioPlacement
+    }
+
+    private func devicePlayoutFormatChanged(_ speakers: [NvstSpeaker?]) {
+        audioStateLock.lock()
+        deviceSpeakers = speakers
+        audioStateLock.unlock()
+        refreshAudioPlacement()
+        onAudioDiagnostic?("output opened with \(speakers.count) channels")
+    }
+
+    private func refreshAudioPlacement() {
+        let layout = receivePipeline?.layout
+        audioStateLock.lock()
+        audioPlacement = layout.map { NvstAudioPlacement(layout: $0, deviceSpeakers: deviceSpeakers) }
+        audioStateLock.unlock()
+    }
+
+    /// The seat says what its audio stream is. Decoding follows it, whatever was asked for.
+    private func applySurroundInfo(_ info: NvstAudioSurroundInfo) {
+        logger?("NVST audio-surround-info \(info.summary)")
+        guard let layout = NvstAudioLayout(info) else {
+            onAudioDiagnostic?("surround info ignored, not a layout this client knows: \(info.summary)")
+            return
+        }
+        guard let receivePipeline, receivePipeline.layout != layout else { return }
+        do {
+            try receivePipeline.configure(layout: layout)
+            audioLayoutSettled("the seat sends \(layout.label) (\(info.summary))")
+        } catch {
+            audioLayoutSettled("no decoder for the seat's \(layout.label) audio (\(error.localizedDescription)); sound is off for this session")
+        }
+    }
+
+    /// The pipeline's layout changed: place the channels anew and reopen the output for it.
+    private func audioLayoutSettled(_ message: String) {
+        onAudioDiagnostic?(message)
+        let channels = receivePipeline?.layout?.channels ?? 2
+        audioChannelCount = channels
+        refreshAudioPlacement()
+        audioDevice?.setPlayoutChannelCount(channels)
+    }
+
+    #if DEBUG
+    private func meterAudio(_ samples: [Float], channels: Int) {
+        audioStateLock.lock()
+        channelMeter.add(samples, channels: channels)
+        audioStateLock.unlock()
+    }
+    #endif
+
+    /// Level and level above 200 Hz of each decoded channel since the last call, for the log.
+    /// Empty outside Debug builds and while the stream is stereo.
+    public func takeAudioChannelLevels() -> String {
+        #if DEBUG
+        audioStateLock.lock()
+        defer { audioStateLock.unlock() }
+        return NvstAudioChannelMeter.summary(channelMeter.take())
+        #else
+        return ""
+        #endif
+    }
+
+    /// "Stereo", "5.1" or "7.1" as decoded, with a note while it is folded to stereo; nil until
+    /// the audio has started and the seat's layout is known.
+    public var audioFormatLabel: String? {
+        guard let receivePipeline else { return nil }
+        return Self.audioFormatLabel(state: receivePipeline.state,
+                                     isDownmix: currentAudioPlacement?.isDownmix ?? false)
+    }
+
+    static func audioFormatLabel(state: NvstAudioReceivePipeline.State, isDownmix: Bool) -> String? {
+        switch state {
+        case .pending: nil
+        case .unavailable: "Unavailable"
+        case .decoding(let layout): isDownmix ? "\(layout.label) (stereo output)" : layout.label
+        }
     }
 
     func sendCapturedMicrophone(pointer: UnsafeRawPointer?, frames: UInt32) {
@@ -525,9 +628,7 @@ public final class NvstNativeBundle: @unchecked Sendable {
         }
         if handleSessionLimitCommand(command) { return }
         if command.code == NvstAudioSurroundInfo.commandCode {
-            if let info = NvstAudioSurroundInfo.parse(command) {
-                logger?("NVST audio-surround-info \(info.summary)")
-            }
+            if let info = NvstAudioSurroundInfo.parse(command) { applySurroundInfo(info) }
             return
         }
         guard let cursor = NvstRemoteCursor.from(command) else { return }
