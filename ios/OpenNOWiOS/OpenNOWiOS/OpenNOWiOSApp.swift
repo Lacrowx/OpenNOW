@@ -14,6 +14,9 @@ final class OpenNOWAppDelegate: NSObject, UIApplicationDelegate {
         OpenNOWImageCache.configureURLCache()
         #if os(tvOS)
         TVDisplayMode.start()
+        #if DEBUG
+        TVAudioSelfTest.runIfRequested()
+        #endif
         #endif
         if ProcessInfo.processInfo.arguments.contains("--opennow-streamer-self-test") {
             NativeStreamSelfTest.run()
