@@ -1,12 +1,17 @@
-name: Bug Report
-description: Report a bug or unexpected behavior
+name: Bug Report (Apple TV)
+description: Report a bug in OpenNOW for Apple TV
 labels: ["bug"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        This repository is the Apple TV (tvOS) port only. For the desktop, iPhone, iPad or Android apps, report at [OpenCloudGaming/OpenNOW](https://github.com/OpenCloudGaming/OpenNOW/issues).
+
   - type: textarea
     id: description
     attributes:
       label: What happened?
-      description: Describe the bug and how to reproduce it
+      description: Describe the bug and how to make it happen again
       placeholder: |
         What went wrong?
 
@@ -16,18 +21,47 @@ body:
     validations:
       required: true
 
-  - type: dropdown
-    id: os
+  - type: input
+    id: version
     attributes:
-      label: Operating System
-      options:
-        - macOS
-        - Windows
-        - Linux
-        - Android
-        - iOS
+      label: OpenNOW version
+      description: The release you installed, or the date you last ran the installer or `git pull`
+      placeholder: "1.1.191"
     validations:
       required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: Apple TV model and tvOS version
+      placeholder: "Apple TV 4K (3rd generation), tvOS 27.1"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install
+    attributes:
+      label: How did you install it?
+      options:
+        - install.sh installer
+        - By hand with Xcode
+        - Unsigned IPA with a sideloading tool
+    validations:
+      required: true
+
+  - type: input
+    id: controller
+    attributes:
+      label: Controller
+      placeholder: "DualSense, Xbox Wireless Controller, Siri Remote only, ..."
+
+  - type: dropdown
+    id: network
+    attributes:
+      label: Network
+      options:
+        - Ethernet
+        - Wi-Fi
 
   - type: dropdown
     id: tier
@@ -41,24 +75,9 @@ body:
       required: true
 
   - type: textarea
-    id: logs
+    id: details
     attributes:
-      label: Logs (required)
+      label: Logs or screenshots (optional)
       description: |
-        Please export and attach your logs:
-        1. Open Settings (gear icon)
-        2. Scroll to Troubleshooting section
-        3. Click "Export Logs"
-        4. Drag the exported .log file here or paste its contents
-
-        Logs help us debug your issue much faster!
-      placeholder: Drag your exported log file here or paste the contents...
+        Photos of the TV, the end-of-session report, or the build log (`Build/tvos-device-build.log`) if the install failed.
       render: shell
-    validations:
-      required: true
-
-  - type: textarea
-    id: screenshots
-    attributes:
-      label: Screenshots (optional)
-      description: If applicable, add screenshots to help explain your problem

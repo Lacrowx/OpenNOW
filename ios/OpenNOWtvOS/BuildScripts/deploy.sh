@@ -15,6 +15,7 @@ xcodebuild build -project ios/OpenNOWtvOS/OpenNOWtvOS.xcodeproj -scheme OpenNOWt
 R=$?; echo "build exit=$R"
 if [ $R -ne 0 ]; then grep -E "^/.*error:|^error:|ld: " Build/tvos-device-build.log | sed -E "s#$ROOT/ios/##" | sort -u | head -40; exit $R; fi
 APP=Build/DerivedData-tvOS/Build/Products/$CONFIG-appletvos/OpenNOW.app
-xcrun devicectl device install app --device "$DEV" "$APP" 2>&1 | grep -E "bundleID|error|Error" | head -3
+OUT=$(xcrun devicectl device install app --device "$DEV" "$APP" 2>&1) || { echo "$OUT" | tail -8; echo "install failed"; exit 1; }
+echo "$OUT" | grep -E "bundleID" | head -1
 BUNDLE=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$APP/Info.plist")
 [ $LAUNCH -eq 0 ] || xcrun devicectl device process launch --terminate-existing --device "$DEV" "$BUNDLE" 2>&1 | tail -1

@@ -69,6 +69,14 @@ Run these from the repository root.
 
 ## Install on your Apple TV
 
+The easy way: after pairing the Apple TV (step 1 below) and signing in under **Xcode → Settings → Accounts**, run
+
+```sh
+sh ios/OpenNOWtvOS/BuildScripts/install.sh
+```
+
+It checks Xcode and the tools, builds the native libraries if needed, asks for your team and Apple TV, writes the two local files from steps 2 and 3 for you, and runs `deploy.sh`. The [main README](../../README.md#install-it-3-steps) walks through it for beginners. The manual steps are:
+
 1. Pair the Apple TV with your Mac. On the Apple TV, open **Settings → Remotes and Devices → Remote App and Devices**. In Xcode, open **Window → Devices and Simulators** and pair it.
 2. Create `ios/OpenNOWtvOS/Signing.local.xcconfig` with your team and a bundle id of your own:
 
@@ -128,7 +136,7 @@ ios/OpenNOWtvOS/
 ├── TVAssets.xcassets  app icon and top shelf image
 ├── Screenshots/       the images in this README
 ├── Signing.xcconfig   signing defaults; your values go in Signing.local.xcconfig
-└── BuildScripts/      native library build, build.sh, deploy.sh and package-ipa.sh
+└── BuildScripts/      native library build, install.sh, build.sh, deploy.sh and package-ipa.sh
 ```
 
 Changes to the shared iOS sources are behind `#if os(tvOS)` or its negation, so the iOS build is unchanged.

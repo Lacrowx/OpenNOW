@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Discussions
-    url: https://github.com/zortos293/GFNClient/discussions
-    about: For general discussions, ideas, and community support
+  - name: OpenNOW for desktop, iPhone, iPad or Android
+    url: https://github.com/OpenCloudGaming/OpenNOW/issues
+    about: This repository is the Apple TV port only. Report other platforms to the official OpenNOW project.
   - name: GeForce NOW Official
     url: https://www.nvidia.com/en-us/geforce-now/
     about: For issues with GeForce NOW service itself (not this client)
