@@ -105,4 +105,32 @@ struct NvstAudioReceivePipelineTests {
         #expect(pipeline.pull(frames: 240, channels: 6).isEmpty)
         #expect(pipeline.pull(frames: 240, channels: 2).count == 480)
     }
+
+    /// Audio that piled up while the output was reopening is dropped, not decoded in one render
+    /// callback, and what arrives afterwards plays as usual.
+    @Test func droppingWhatIsHeldEmptiesItAndLaterAudioDecodes() throws {
+        let pipeline = try NvstAudioReceivePipeline(srtp: try srtp())
+        let all = try datagrams(48)
+        for datagram in all.prefix(40) { pipeline.ingest(datagram) }
+        #expect(pipeline.backlogSeconds > 0)
+        pipeline.dropBuffered()
+        #expect(pipeline.backlogSeconds == 0)
+        #expect(pipeline.pull(frames: 240, channels: 2).isEmpty)
+        #expect(pipeline.snapshot.packetsDecoded == 0)
+        for datagram in all.suffix(8) { pipeline.ingest(datagram) }
+        #expect(pipeline.pull(frames: 240, channels: 2).count == 480)
+        #expect(pipeline.snapshot.packetsDecoded > 0)
+        #expect(pipeline.snapshot.decodeFailures == 0)
+    }
+
+    /// Nothing buffered for the old layout comes out after a change to another one.
+    @Test func aChangedLayoutDropsWhatWasBufferedForTheOldOne() throws {
+        let pipeline = try NvstAudioReceivePipeline(srtp: try srtp())
+        for datagram in try datagrams(16) { pipeline.ingest(datagram) }
+        #expect(pipeline.pull(frames: 240, channels: 2).count == 480)
+        try pipeline.configure(layout: .surround51)
+        #expect(pipeline.backlogSeconds == 0)
+        #expect(pipeline.pull(frames: 240, channels: 6).isEmpty)
+        #expect(pipeline.pull(frames: 240, channels: 2).isEmpty)
+    }
 }

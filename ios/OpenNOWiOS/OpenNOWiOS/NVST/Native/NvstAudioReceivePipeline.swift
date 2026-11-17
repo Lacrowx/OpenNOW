@@ -272,6 +272,18 @@ public final class NvstAudioReceivePipeline: @unchecked Sendable {
         }
     }
 
+    /// Drops the packets waiting in the jitter buffer and the decoded audio not yet played, keeping
+    /// the layout, the decoder and the replay windows. Audio that arrived while nothing was
+    /// playing is not worth playing late, and decoding all of it at once would happen inside one
+    /// real-time render callback.
+    public func dropBuffered() {
+        lock.lock()
+        defer { lock.unlock() }
+        jitter.reset()
+        bufferedSamples.removeAll(keepingCapacity: true)
+        sampleOffset = 0
+    }
+
     public func reset() {
         lock.lock()
         defer { lock.unlock() }

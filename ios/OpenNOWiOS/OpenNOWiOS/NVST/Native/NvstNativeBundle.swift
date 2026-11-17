@@ -474,6 +474,9 @@ public final class NvstNativeBundle: @unchecked Sendable {
     }
 
     private func devicePlayoutFormatChanged(_ speakers: [NvstSpeaker?]) {
+        // The output is about to open or reopen: what piled up while it was not playing goes,
+        // rather than being decoded in the first render callback and then trimmed.
+        receivePipeline?.dropBuffered()
         audioStateLock.lock()
         deviceSpeakers = speakers
         audioStateLock.unlock()
