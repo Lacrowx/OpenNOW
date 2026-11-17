@@ -64,7 +64,8 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
     @Published private(set) var hudItems: [String] = []
     @Published private(set) var statsVisible: Bool
     @Published private var menu = TVStreamMenu()
-    /// Set while HDR video is playing; the stream screen asks tvOS to match the TV to it.
+    /// Set while video plays in a display mode this app does not hold; the stream screen asks
+    /// tvOS to match the TV to it.
     @Published private(set) var displayCriteria: AVDisplayCriteria?
 
     var menuVisible: Bool { menu.visible }
@@ -289,7 +290,7 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
 
     func leave() { stop(); onClose() }
 
-    /// An Apple TV with Match Content on idles in SDR and enters HDR only for a video that asks.
+    /// With Match Content on, tvOS switches the TV to the dynamic range and frame rate a video asks for.
     private func videoFormatChanged(_ format: CMVideoFormatDescription, fps: Float) {
         guard !stopped else { return }
         let transfer = CMFormatDescriptionGetExtension(format,
@@ -299,10 +300,11 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
         // Decided on the video that arrives, not the HDR setting: a stream requested as HDR is often
         // SDR. When the display is held in a mode for this video (fixed in Settings, or a high-refresh
         // one) it is selected directly; the system's own mode matching stays at 60 Hz, so it is only
-        // the fallback for HDR.
+        // the fallback, and it is asked for SDR video too: a TV left in Dolby Vision or HDR10 then
+        // returns to SDR for an SDR game instead of showing it tone-mapped.
         let modeHeld = TVDisplayMode.streamVideo(fps: Int(fps),
             width: Int(CMVideoFormatDescriptionGetDimensions(format).width), hdr: hdr)
-        displayCriteria = hdr && !modeHeld ? AVDisplayCriteria(refreshRate: fps, formatDescription: format) : nil
+        displayCriteria = modeHeld ? nil : AVDisplayCriteria(refreshRate: fps, formatDescription: format)
         tvStreamDebug("[TVStream] video format transfer=\(transfer ?? "none") hdr=\(hdr)")
     }
 
