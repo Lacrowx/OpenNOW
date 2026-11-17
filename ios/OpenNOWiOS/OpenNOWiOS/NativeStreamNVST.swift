@@ -582,11 +582,14 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
         guard !stopped else { return }
         let state = pipeline.snapshot
         let detail = "native NVST hardware=\(decoder.isHardwareAccelerated) thermal=\(ProcessInfo.processInfo.thermalState.rawValue) lowPower=\(ProcessInfo.processInfo.isLowPowerModeEnabled) resolution=\(decoder.decodedResolution ?? "pending") output=\(decoder.outputPixelFormatName) bitstream=\(decoder.bitstreamFormat?.summary ?? "pending") requestedColor=\(StreamSettingsResolver.colorQuality(for: settings).rawValue) requestedHDR=\(settings.hdrEnabled) sessions=\(decoder.sessionCreationCount) failed=\(decoder.failedFrameCount) errors=\(decoder.failureStatusSummary) decoderStages=\(decoder.stageTimingSummary) recovery[requests=\(keyframeRequests) control=\(controlKeyframeRequests) udp=\(udpKeyframeRequests) keyframes=\(stats.keyframesEmitted) feedback=\(bundle?.isFeedbackChannelOpen == true)] buffer=\(receiver.receiveBufferBytes) ack=\(state.frameAcksSent) pacing=\(state.pacingReportsSent) fec=\(stats.recoveredPackets) nack[requests=\(stats.nack.requestsSent) packets=\(stats.nack.packetsRequested) resent=\(stats.nack.packetsReceived)] auth=\(stats.authenticatedPackets) \(state.timingSummary)"
+        let audioBacklog = bundle?.audioBacklog.map {
+            String(format: " audioBacklog=%.0fms trims=%d", $0.seconds * 1000, Int($0.trims))
+        } ?? ""
         var nvstSample = NativeStreamNVSTSample(received: counters.framesEmitted, decoded: decoded, bytes: counters.bytesReceived,
             lost: stats.finalizedLossPackets, packets: stats.authenticatedPackets, resolution: decoder.decodedResolution,
             decodeMilliseconds: state.decodeP50Milliseconds, pingMilliseconds: ping >= 0 ? ping : nil,
             jitterMilliseconds: Double(stats.lastJitter) / 90, hardware: decoder.isHardwareAccelerated,
-            pixelFormat: decoder.outputPixelFormatName, bitstream: decoder.bitstreamFormat?.summary ?? "pending", detail: detail)
+            pixelFormat: decoder.outputPixelFormatName, bitstream: decoder.bitstreamFormat?.summary ?? "pending", detail: detail + audioBacklog)
         nvstSample.audioFormat = bundle?.audioFormatLabel
         nvstSample.audioLevels = bundle?.takeAudioChannelLevels() ?? ""
         onSample(nvstSample)
