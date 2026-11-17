@@ -363,8 +363,7 @@ public final class NvstNativeBundle: @unchecked Sendable {
             let directions = NvstAudioSrtpDirection.directions(from: keys)
             receivePipeline = try NvstAudioReceivePipeline(
                 srtp: try NvstAudioSrtp(masterKey: directions.inbound.key, masterSalt: directions.inbound.salt, profile: profile),
-                framesPerPacket: Self.decodedAudioFramesPerPacket,
-                channels: Self.microphoneChannels
+                framesPerPacket: Self.decodedAudioFramesPerPacket
             )
             sendPipeline = nil
             if let microphone {
@@ -403,7 +402,7 @@ public final class NvstNativeBundle: @unchecked Sendable {
                 return
             }
             let frames = sampleCount / max(1, outputChannels)
-            let stereo = pipeline.pull(sampleCount: frames * Self.decodedAudioChannels)
+            let stereo = pipeline.pull(frames: frames, channels: Self.decodedAudioChannels)
             let samples = NvstCoreAudioFormat.interleavedSamples(fromStereo: stereo, frames: frames, outputChannels: outputChannels)
             let count = min(samples.count, sampleCount)
             for index in 0..<count { destination[index] = samples[index] }
