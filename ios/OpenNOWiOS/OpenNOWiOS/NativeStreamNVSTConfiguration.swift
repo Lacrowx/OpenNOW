@@ -37,7 +37,8 @@ enum NativeStreamNVSTConfiguration {
         request["streamerVersion"] = "14"
         request["sdkVersion"] = "2.0"
         request["enhancedStreamMode"] = 0
-        request["requestedAudioFormat"] = 0
+        // A surround format the session or claim body asked for (2 or 3) is kept; stereo sends 0.
+        if request["requestedAudioFormat"] == nil { request["requestedAudioFormat"] = 0 }
         request["transport"] = NSNull()
         if let metadata = request["metaData"] as? [[String: String]] {
             request["metaData"] = metadata.filter { $0["key"] != "GSStreamerType" }
