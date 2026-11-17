@@ -7,9 +7,9 @@ import Foundation
 /// and an `AudioConverter` from Opus to float PCM builds cleanly — so nothing has to be vendored
 /// for this.
 ///
-/// The seat sends 48 kHz stereo in 5 ms frames — a measured RTP timestamp step of 240 at ~200
-/// packets a second — and that step is exactly the frame count, so it is passed in rather than
-/// guessed.
+/// The seat sends 48 kHz audio in 5 ms frames — stereo, or the 5.1 or 7.1 multistream layout it
+/// names in `0x0408` — with a measured RTP timestamp step of 240 at ~200 packets a second, and
+/// that step is exactly the frame count, so it is passed in rather than guessed.
 ///
 /// The frame count has to be exact. `AudioConverterFillComplexBuffer` treats an input callback
 /// that supplies no packet as end-of-stream and latches: asking for more frames than one packet
@@ -213,8 +213,9 @@ public final class NvstOpusDecoder: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         // Truncating to fit the scratch buffer would hand the decoder garbage. Nothing this stream
-        // sends approaches the capacity — the seat's packets measure ~51 bytes — so a packet this
-        // big is dropped and counted rather than mangled.
+        // sends approaches the capacity — the seat's stereo packets measure ~51 bytes, and a
+        // surround packet carries one Opus stream per stream of its layout, still far below 8 KB —
+        // so a packet this big is dropped and counted rather than mangled.
         guard packet.count <= queue.capacity else {
             oversizedPacketCount += 1
             return nil

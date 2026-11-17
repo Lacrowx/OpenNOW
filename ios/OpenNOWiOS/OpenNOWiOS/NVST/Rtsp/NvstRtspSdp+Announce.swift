@@ -164,8 +164,8 @@ extension NvstRtspSdp {
     /// Layer three, part two: the surround request. The captured stereo baseline only carries
     /// `surround.version:2`; a 5.1 or 7.1 session adds the enable flag, channel count and speaker
     /// mask (`libBifrost2` strings `x-nv-audio.surround.enable` / `numChannels` / `channelMask`).
-    /// The bundle's answer must have been built for the same count, or the seat's multi-channel
-    /// Opus lands on a stereo decoder.
+    /// This is only the request: the bundle's receive pipeline waits for the seat's `0x0408` and
+    /// decodes the layout it names, not the count asked for here.
     static func applyAudioAttributes(_ attributes: inout AnnounceAttributes, options: AnnounceOptions) {
         guard let mask = surroundChannelMask(channels: options.audioChannelCount) else { return }
         attributes.set("x-nv-audio.surround.enable", "1")

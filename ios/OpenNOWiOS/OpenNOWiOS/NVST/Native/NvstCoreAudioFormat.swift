@@ -20,8 +20,8 @@ public enum NvstCoreAudioFormat {
     }
 
     /// What the device should ask the hardware for: a surround count is only used when the device can
-    /// actually carry it. libwebrtc cannot fold a surround decode down to fewer channels, so handing
-    /// a stereo device a six-channel count produces silence rather than a downmix.
+    /// actually carry it. Otherwise the output opens with at most two channels and
+    /// `NvstAudioPlacement` folds the surround decode down to them.
     public static func playoutChannelCount(requested: Int, deviceChannels: Int) -> Int {
         let supported = supportedPlayoutChannelCount(requested)
         guard supported > 2, deviceChannels >= supported else {
