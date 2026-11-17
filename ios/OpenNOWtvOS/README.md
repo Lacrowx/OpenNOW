@@ -19,6 +19,7 @@ Screenshots are from the tvOS simulator with sample data.
 - **Sessions.** Queue screen, launch conflicts, and rejoining or ending a session left over from an earlier run.
 - **In-stream menu.** Hold Options for about a second during a stream, or press Back on the Siri Remote, for stream stats, trigger feels and ending the session.
 - **120 Hz.** Apple TV 4K offers 120 Hz only below 4K (2560x1440 and 1920x1080). With a 120 fps stream the app switches the TV to a matching mode and gives the system's mode back when it leaves the foreground. You can also fix a mode in Settings.
+- **Surround sound.** With **Settings → Sound** on Automatic, a stream asks the seat for 5.1 or 7.1 when the TV or receiver reports that many channels, and stays stereo otherwise. The stream menu shows the format in use. If the output changes to a stereo one during a stream, surround is folded down to stereo.
 - **DualSense.** When the seat supports it, a DualSense is sent to the seat as a DualShock 4 HID device, so games can show PlayStation button prompts, and rumble comes back to the pad. Other controllers are sent as Xbox-style pads.
   - On Steam games, prompts may stay Xbox until Steam's **Settings → Controller → PlayStation Controller Support** is set to **Not Enabled** on the host.
   - **DualSense trigger effects** (Settings → Input → Controller → Experimental) offers the pad to the seat as a DualSense. The seats tested so far refused it, and the pad falls back to the DualShock 4 route. There is a page there that plays each trigger effect locally.
@@ -31,6 +32,7 @@ Screenshots are from the tvOS simulator with sample data.
 - Free-tier accounts do not get the iOS app's server picker; a launch uses the automatic server choice.
 - 4K at 120 fps is not possible: the Apple TV does not offer a 4K 120 Hz mode. A 4K 120 fps HEVC 10-bit 4:4:4 stream also decoded too slowly on an Apple TV 4K (4th generation) and skipped frames.
 - iOS-only pages (touch controls, clipboard, web links, orientation) are left out on tvOS.
+- Surround speaker placement was checked with level readouts on a TV without surround speakers, not by ear on a receiver. 7.1 was measured on a live stream; 5.1 follows the same pattern but was not measured.
 
 ## Requirements
 

@@ -82,13 +82,25 @@ public struct NvstAudioLayout: Equatable, Sendable {
         }
     }
 
-    /// The speaker of each decoded channel: the Windows order that the announce's speaker mask
-    /// (`0x3F`, `0x63F`) is written in. Not yet confirmed against a live stream.
-    private static let speakerOrder: [NvstSpeaker] = [
-        .frontLeft, .frontRight, .frontCenter, .lowFrequency, .backLeft, .backRight, .sideLeft, .sideRight,
-    ]
+    /// The speaker of each coded channel as the seat encodes them. Confirmed against a live 7.1
+    /// stream on 2026-11-17: with the seat's own table the decoded order is FL, FR, FC, BL, BR,
+    /// SL, SR, LFE (stereo menus only on the first two, the last silent, the side pair moving with
+    /// the front pair), and the official client's table turns the same coded channels into the
+    /// Windows order of the announce's speaker mask (`0x3F`, `0x63F`). 5.1 follows the same
+    /// pattern; it was not measured.
+    private static func codedSpeakers(channels: Int) -> [NvstSpeaker] {
+        switch channels {
+        case 6: [.frontLeft, .frontCenter, .backLeft, .backRight, .frontRight, .lowFrequency]
+        case 8: [.frontLeft, .frontCenter, .backLeft, .backRight, .sideLeft, .sideRight, .frontRight, .lowFrequency]
+        default: [.frontLeft, .frontRight]
+        }
+    }
 
-    public var speakers: [NvstSpeaker] { Array(Self.speakerOrder.prefix(channels)) }
+    /// The speaker of each decoded channel: the speaker of the coded channel the table reads it from.
+    public var speakers: [NvstSpeaker] {
+        let coded = Self.codedSpeakers(channels: channels)
+        return mapping.map { coded[Int($0)] }
+    }
 
     public var label: String {
         switch channels {

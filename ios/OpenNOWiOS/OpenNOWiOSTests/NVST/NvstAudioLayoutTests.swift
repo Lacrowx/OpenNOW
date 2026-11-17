@@ -85,7 +85,18 @@ struct NvstAudioLayoutTests {
         #expect(NvstAudioLayout.stereo.speakers == [.frontLeft, .frontRight])
         #expect(NvstAudioLayout.surround51.speakers
                 == [.frontLeft, .frontRight, .frontCenter, .lowFrequency, .backLeft, .backRight])
-        #expect(NvstAudioLayout.surround71.speakers.count == 8)
-        #expect(Set(NvstAudioLayout.surround71.speakers).count == 8)
+        #expect(NvstAudioLayout.surround71.speakers
+                == [.frontLeft, .frontRight, .frontCenter, .lowFrequency, .backLeft, .backRight, .sideLeft, .sideRight])
+    }
+
+    /// The seat's own tables decode its channels in the order measured on a live 7.1 stream on
+    /// 2026-11-17 (stereo menus only on the first two, the last silent, the side pair moving with
+    /// the front pair); the official client's tables reorder the same stream to the Windows order.
+    @Test func theSeatsTablesGiveTheMeasuredOrder() throws {
+        let layouts = NvstAudioLayout.seatLayouts(describe: "a=nv-audio-surround-opus-params: 64204123500;85306123457;")
+        #expect(try #require(layouts.first { $0.channels == 6 }).speakers
+                == [.frontLeft, .frontRight, .frontCenter, .backLeft, .backRight, .lowFrequency])
+        #expect(try #require(layouts.first { $0.channels == 8 }).speakers
+                == [.frontLeft, .frontRight, .frontCenter, .backLeft, .backRight, .sideLeft, .sideRight, .lowFrequency])
     }
 }
