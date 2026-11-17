@@ -1,11 +1,15 @@
 #!/bin/sh
 # Build an unsigned Release OpenNOW.app and zip it as Build/OpenNOW-tvOS-<version>-unsigned.ipa
 # for sideloading tools, which re-sign it. Usage: package-ipa.sh
+# The IPA is for sharing, so it always gets the committed default bundle id and no team, even when
+# Signing.local.xcconfig holds personal values.
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd) || exit 1
 cd "$ROOT" || exit 1
 mkdir -p Build
+BUNDLE_ID=$(sed -n 's/^OPENNOW_TVOS_BUNDLE_ID = //p' ios/OpenNOWtvOS/Signing.xcconfig)
+[ -n "$BUNDLE_ID" ] || { echo "no default bundle id in Signing.xcconfig"; exit 1; }
 xcodegen generate --spec ios/OpenNOWtvOS/project.yml >/dev/null 2>&1 || { echo "xcodegen failed"; exit 1; }
-xcodebuild build -project ios/OpenNOWtvOS/OpenNOWtvOS.xcodeproj -scheme OpenNOWtvOS -configuration Release -destination 'generic/platform=tvOS' -derivedDataPath Build/DerivedData-tvOS CODE_SIGNING_ALLOWED=NO > Build/tvos-ipa-build.log 2>&1
+xcodebuild build -project ios/OpenNOWtvOS/OpenNOWtvOS.xcodeproj -scheme OpenNOWtvOS -configuration Release -destination 'generic/platform=tvOS' -derivedDataPath Build/DerivedData-tvOS CODE_SIGNING_ALLOWED=NO DEVELOPMENT_TEAM= OPENNOW_TVOS_BUNDLE_ID="$BUNDLE_ID" > Build/tvos-ipa-build.log 2>&1
 R=$?; echo "build exit=$R"
 if [ $R -ne 0 ]; then grep -E "^/.*error:|^error:|ld: " Build/tvos-ipa-build.log | sed -E "s#$ROOT/ios/##" | sort -u | head -40; exit $R; fi
 APP=Build/DerivedData-tvOS/Build/Products/Release-appletvos/OpenNOW.app
