@@ -1,6 +1,7 @@
 import CoreMedia
 import CoreVideo
 import Foundation
+import os
 #if canImport(WebRTC)
 import WebRTC
 typealias NativeStreamNVSTFrame = RTCVideoFrame
@@ -131,6 +132,9 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
     private var controlKeyframeRequests = 0
     private var udpKeyframeRequests = 0
     private var videoLiveness = NativeStreamVideoLiveness(now: DispatchTime.now().uptimeNanoseconds)
+    /// Set while the app is briefly in the background: video is received but not decoded (the
+    /// system refuses hardware decoding there), and its absence does not count as a stall.
+    private let videoSuspended = OSAllocatedUnfairLock(initialState: false)
     private var didFinish = false
     private var touchPacketsSent = 0
     private var touchRecordsSent = 0
@@ -284,7 +288,9 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
         let descriptor = reserver?.takeMjolnirDescriptor() ?? -1
         let receiver = try NvstMjolnirReceiver(handoff: handoff, sendsReceiverReports: false, existingDescriptor: descriptor)
         self.receiver = receiver
+        let videoSuspended = videoSuspended
         receiver.onAccessUnit = { unit in
+            guard !videoSuspended.withLock({ $0 }) else { return }
             pipeline.submit(unit)
         }
         receiver.onRecoveryNeeded = { [weak self] _ in Task { await self?.requestKeyframe() } }
@@ -569,6 +575,7 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
         let stats = receiver.stats
         if let ssrc = stats.boundSSRC { feedback.updateMediaSSRC(ssrc) }
         let decoded = decoder.decodedFrameCount
+        if videoSuspended.withLock({ $0 }) { return }
         switch videoLiveness.observe(decoded: decoded, now: DispatchTime.now().uptimeNanoseconds) {
         case .none: break
         case .requestKeyframe: requestKeyframe()
@@ -613,6 +620,20 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
     }
 
     func setAudioMuted(_ muted: Bool) { bundle?.setRemoteAudioMuted(muted) }
+
+    /// Holds the stream open without showing it, for a short stay in the background: video is
+    /// dropped before the decoder and sound is muted. Resuming asks the seat for a keyframe, so
+    /// the picture comes back without waiting for the next one.
+    func setSuspended(_ suspended: Bool) {
+        guard !stopped, videoSuspended.withLock({ $0 }) != suspended else { return }
+        videoSuspended.withLock { $0 = suspended }
+        bundle?.setRemoteAudioMuted(suspended)
+        onDiagnostic?("NVST stream \(suspended ? "suspended" : "resumed")")
+        guard !suspended else { return }
+        videoLiveness = NativeStreamVideoLiveness(now: DispatchTime.now().uptimeNanoseconds)
+        lastKeyframeRequestAt = nil
+        requestKeyframe()
+    }
 
     func close() async {
         guard !stopped else { return }

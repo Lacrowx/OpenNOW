@@ -755,6 +755,21 @@ extension GCDualSenseAdaptiveTrigger {
     }
 }
 
+/// A pad's motion sensors in the Sony report's terms. Game Controller reports a pad like a phone
+/// lying face up: X to the right, Y away from the player, Z up out of the face, rotation in
+/// radians a second, and acceleration in g that points along gravity. The Sony pads report X to
+/// the right, Y up and Z towards the player, in degrees a second, and the force holding the pad
+/// up (+1 g on Y at rest).
+enum NativeStreamControllerMotion {
+    static func sample(_ motion: GCMotion) -> NvstHidPassthrough.SynthesizedDualShock4.Motion {
+        let rate = motion.rotationRate
+        let acceleration = motion.acceleration
+        let degrees = 180 / Double.pi
+        return .init(degreesPerSecond: (rate.x * degrees, rate.z * degrees, -rate.y * degrees),
+                     g: (-acceleration.x, -acceleration.z, acceleration.y))
+    }
+}
+
 final class NativeStreamInputBridge {
     weak var sink: NativeStreamInputSink?
     var onPhysicalControllerAvailabilityChanged: ((Bool) -> Void)?
@@ -788,6 +803,12 @@ final class NativeStreamInputBridge {
     private var dualSenseRoutes: [Int: DualSenseRoute] = [:]
     private var lastDualSenseStates: [Int: NvstHidPassthrough.DualSense.State] = [:]
     private var dualSenseSequence: UInt8 = 0
+    /// The user's setting: send a Sony pad's gyroscope and accelerometer with its reports.
+    private var motionEnabled = false
+    private var motionBySlot: [Int: NvstHidPassthrough.SynthesizedDualShock4.Motion] = [:]
+    private var lastMotionSendAt: [Int: TimeInterval] = [:]
+    /// The sensors report far faster than a game reads them; this caps the extra packets.
+    private static let motionSendInterval: TimeInterval = 1.0 / 250
     /// The user's setting: how strongly a game's body rumble also plays on a DualSense's
     /// triggers, 0 for not at all. It is separate from the strength of the handle motors.
     private var triggerRumbleStrength: Float = 0
@@ -910,6 +931,39 @@ final class NativeStreamInputBridge {
         releaseDualSenseRoutes(notifyingHost: true)
         dualSensePassthroughEnabled = enabled
         sendCurrentGamepads(force: true)
+    }
+
+    /// Motion data only reaches the host on the Sony HID routes; other pads send none.
+    func setMotionEnabled(_ enabled: Bool) {
+        guard motionEnabled != enabled else { return }
+        motionEnabled = enabled
+        controllersBySlot.forEach { configureMotion($0.value, slot: $0.key) }
+        sendCurrentGamepads(force: true)
+    }
+
+    private func configureMotion(_ controller: GCController, slot: Int) {
+        guard let motion = controller.motion else { return }
+        let wanted = motionEnabled && physicalControllerPassthroughEnabled
+        if motion.sensorsRequireManualActivation { motion.sensorsActive = wanted }
+        motionBySlot[slot] = nil
+        guard wanted, motion.hasRotationRate else {
+            motion.valueChangedHandler = nil
+            return
+        }
+        motion.valueChangedHandler = { [weak self] motion in
+            guard let self, self.controllersBySlot[slot] === controller else { return }
+            self.motionBySlot[slot] = NativeStreamControllerMotion.sample(motion)
+            let now = ProcessInfo.processInfo.systemUptime
+            guard now - (self.lastMotionSendAt[slot] ?? 0) >= Self.motionSendInterval else { return }
+            self.lastMotionSendAt[slot] = now
+            self.sendGamepad(slot: slot, force: false)
+        }
+    }
+
+    private func stopMotion(_ controller: GCController) {
+        guard let motion = controller.motion else { return }
+        motion.valueChangedHandler = nil
+        if motion.sensorsRequireManualActivation { motion.sensorsActive = false }
     }
 
     private func usesDualSenseHID(slot: Int) -> Bool {
@@ -1126,7 +1180,13 @@ final class NativeStreamInputBridge {
         controllersBySlot.values.forEach {
             $0.extendedGamepad?.valueChangedHandler = nil
             NativeStreamControllerButtonNames.buttons($0).forEach { $0.1.pressedChangedHandler = nil }
+            stopMotion($0)
+            #if os(tvOS)
+            $0.playerIndex = .indexUnset
+            #endif
         }
+        motionBySlot.removeAll()
+        lastMotionSendAt.removeAll()
         keyboard = nil
         mice = []
         // While the pads are still known: a trigger must not keep an effect after the stream.
@@ -1634,6 +1694,7 @@ final class NativeStreamInputBridge {
         controllersBySlot.values.forEach {
             $0.extendedGamepad?.valueChangedHandler = nil
             NativeStreamControllerButtonNames.buttons($0).forEach { $0.1.pressedChangedHandler = nil }
+            stopMotion($0)
         }
 
         let connectedControllers = GCController.controllers().filter { $0.extendedGamepad != nil }
@@ -1642,6 +1703,7 @@ final class NativeStreamInputBridge {
         for identifier in disconnectedIdentifiers {
             guard let slot = controllerSlots.removeValue(forKey: identifier) else { continue }
             _ = controllersBySlot.removeValue(forKey: slot)
+            motionBySlot[slot] = nil
             stopControllerRumble(slot: slot, shutdown: true)
             if physicalControllerPassthroughEnabled {
                 disconnectGamepad(slot: slot)
@@ -1666,6 +1728,11 @@ final class NativeStreamInputBridge {
         onPhysicalControllerAvailabilityChanged?(hasActivePhysicalController)
         for (slot, controller) in controllersBySlot {
             controller.handlerQueue = .main
+            #if os(tvOS)
+            // The pad's player lights show which player it is on the host, for couch co-op.
+            controller.playerIndex = GCControllerPlayerIndex(rawValue: slot) ?? .indexUnset
+            #endif
+            configureMotion(controller, slot: slot)
             let buttons = NativeStreamControllerButtonNames.buttons(controller)
             NativeStreamRumbleDiagnostics.shared.record("controllerButtonsAvailable", details: [
                 "controllerButtons": buttons.map { $0.0 }.joined(separator: ", ")])
@@ -1788,7 +1855,8 @@ final class NativeStreamInputBridge {
             buttons: game.buttons, leftTrigger: game.leftTrigger, rightTrigger: game.rightTrigger,
             leftStickX: game.leftStickX, leftStickY: game.leftStickY,
             rightStickX: game.rightStickX, rightStickY: game.rightStickY,
-            touchpadPressed: touchpadPressed && !controllerHUDActive))
+            touchpadPressed: touchpadPressed && !controllerHUDActive,
+            motion: controllerHUDActive ? .zero : motionBySlot[game.controllerId] ?? .zero))
     }
 
     private func sendDualShock4State(_ incoming: NativeStreamGamepadState, touchpadPressed: Bool, force: Bool) {
@@ -2151,6 +2219,7 @@ final class NativeStreamInputBridge {
     func setPhysicalControllerPassthrough(_ enabled: Bool) {}
     func setDualShock4HIDAvailable(_ available: Bool) {}
     func setDualSensePassthrough(_ enabled: Bool) {}
+    func setMotionEnabled(_ enabled: Bool) {}
     func setTriggerRumbleStrength(_ strength: Double) {}
     func setFixedTriggerEffects(left: NvstHidPassthrough.DualSense.TriggerEffect, right: NvstHidPassthrough.DualSense.TriggerEffect) {}
     func dualSenseRouteAnswered(controllerId: Int, accepted: Bool) {}

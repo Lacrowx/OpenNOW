@@ -11,11 +11,24 @@ final class TVFrameRenderer: @unchecked Sendable {
     private var format: CMVideoFormatDescription?
     /// Called on the decoder's queue when the decoded video format changes.
     var onFormatChange: (@Sendable (CMVideoFormatDescription) -> Void)?
+    /// Called on the decoder's queue with the milliseconds from `markResume()` to the next frame.
+    var onResumedFrame: (@Sendable (Double) -> Void)?
+    private var resumedAt: UInt64?
+
+    /// Times how long the picture takes to come back after the stream was suspended.
+    func markResume() {
+        lock.lock(); defer { lock.unlock() }
+        resumedAt = DispatchTime.now().uptimeNanoseconds
+    }
 
     init(layer: AVSampleBufferDisplayLayer) { renderer = layer.sampleBufferRenderer }
 
     func enqueue(_ frame: NativeStreamNVSTFrame) {
         lock.lock(); defer { lock.unlock() }
+        if let resumedAt {
+            self.resumedAt = nil
+            onResumedFrame?(Double(DispatchTime.now().uptimeNanoseconds - resumedAt) / 1_000_000)
+        }
         if format.map({ !CMVideoFormatDescriptionMatchesImageBuffer($0, imageBuffer: frame.pixelBuffer) }) ?? true {
             format = nil
             CMVideoFormatDescriptionCreateForImageBuffer(allocator: kCFAllocatorDefault,
@@ -67,6 +80,17 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
     /// Set while video plays in a display mode this app does not hold; the stream screen asks
     /// tvOS to match the TV to it.
     @Published private(set) var displayCriteria: AVDisplayCriteria?
+    /// Seconds left on the "Still playing?" countdown; nil while someone is playing.
+    @Published private(set) var idleSecondsLeft: Int?
+
+    /// A short message over the game, cleared after a few seconds: slow wireless sound, Wi-Fi
+    /// trouble, a controller running low.
+    @Published private(set) var notice: String?
+    /// Wi-Fi or Ethernet, for the connecting screen, the menu and the session report.
+    @Published private(set) var networkKind: SessionNetworkKind = .unknown
+
+    /// What the countdown ends in, as Settings chose it.
+    var idleAction: StreamIdleAction { settings.streamIdleAction }
 
     var menuVisible: Bool { menu.visible }
     var selection: Int { menu.selection }
@@ -118,6 +142,14 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
     private var transport: NativeStreamNVST?
     private var startTask: Task<Void, Never>?
     private var backgroundObserver: NSObjectProtocol?
+    private var foregroundObserver: NSObjectProtocol?
+    /// Set while the app is away for a moment with the stream held open.
+    private var suspendedAt: TimeInterval?
+    private var backgroundTask: UIBackgroundTaskIdentifier = .invalid
+    private var backgroundGraceTask: Task<Void, Never>?
+    /// How long a stream waits in the background for the player to come back. tvOS gives a
+    /// background task about half a minute; the rest is left for closing the stream cleanly.
+    private static let backgroundGrace: TimeInterval = 20
     private var statsReader = TVStreamStats()
     private var historyRecord: StreamSessionRecord?
     /// The codec in use, as the HUD and the session report name it.
@@ -137,6 +169,17 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
     private var inputSends = 0
     private var inputRawAgeMin = Double.infinity
     private var samplesSinceStatsLog = 0
+    /// Nil when Settings leaves idle streams alone.
+    private var idleGuard: TVStreamIdleGuard?
+    private var lastInputSignature: TVInputActivitySignature?
+    private let networkMonitor = TVNetworkMonitor()
+    private var wifiTrouble = TVWiFiTroubleDetector()
+    private var audioRoute: TVAudioRoute?
+    private var audioRouteObserver: NSObjectProtocol?
+    /// The lowest battery level each player has been warned about this stream.
+    private var batteryWarned: [Int: Int] = [:]
+    private var noticeTask: Task<Void, Never>?
+    private static let noticeDuration: Duration = .seconds(8)
 
     init(session: ActiveSession, settings: AppSettings, membershipTier: String?,
          sessionHistory: StreamSessionHistoryStore?,
@@ -174,6 +217,7 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
             controllerRumbleStrength: settings.controllerRumbleStrength)
         inputBridge.setTriggerRumbleStrength(settings.triggerRumbleStrength)
         inputBridge.setFixedTriggerEffects(left: triggerFeels.left.effect, right: triggerFeels.right.effect)
+        inputBridge.setMotionEnabled(settings.controllerMotionEnabled)
         inputBridge.onControllerHUDCommand = { [weak self] command in
             Task { @MainActor in self?.handleMenu(command) }
         }
@@ -184,12 +228,26 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
         started = true
         inputBridge.attach()
         UIApplication.shared.isIdleTimerDisabled = true
+        networkMonitor.start { [weak self] kind in self?.networkChanged(kind) }
+        audioRouteObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshAudioRoute(announce: true) }
+        }
+        if settings.streamIdleAction != .off {
+            idleGuard = TVStreamIdleGuard(idleMinutes: settings.streamIdleMinutes,
+                                          now: ProcessInfo.processInfo.systemUptime)
+        }
         startMenuPolling()
-        // A suspended app loses the stream's sockets, so the stream is closed on the way out. The
-        // session keeps running on the host and can be rejoined from the app.
+        // A suspended app loses the stream's sockets. A short trip to the Home screen keeps the
+        // stream open under a background task instead, so coming back is instant; a longer one
+        // closes it, and the session keeps running on the host to be rejoined from the app.
         backgroundObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
-            MainActor.assumeIsolated { self?.leave() }
+            MainActor.assumeIsolated { self?.enteredBackground() }
+        }
+        foregroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.enteringForeground() }
         }
         guard !(session.nativeRtspsEndpoints ?? []).isEmpty else {
             fail("This session has no native streaming endpoint. End it and start the game again.")
@@ -226,6 +284,10 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
         let audioChannels = StreamSettingsResolver.audioChannelCount(for: session, settings: settings)
         tvStreamDebug("[TVStream] audio output carries \(TVAudioOutput.channels) channels, asking the seat for \(audioChannels)"
             + (session.requestedAudioChannelCount == nil ? " (resolved now)" : " (as the session was requested)"))
+        renderer.onResumedFrame = { milliseconds in
+            TVStreamLog.note(String(format: "picture back %.0f ms after returning", milliseconds))
+            tvStreamDebug(String(format: "[TVStream] resume: first frame %.0f ms after returning", milliseconds))
+        }
         let transport = NativeStreamNVST(allocation: session, settings: settings, profile: profile, codec: codec,
             displayFPS: max(profile.fps, UIScreen.main.maximumFramesPerSecond),
             audioChannelCount: audioChannels,
@@ -284,12 +346,82 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
         menuPoll?.invalidate(); menuPoll = nil
         if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
         backgroundObserver = nil
+        if let foregroundObserver { NotificationCenter.default.removeObserver(foregroundObserver) }
+        foregroundObserver = nil
+        backgroundGraceTask?.cancel(); backgroundGraceTask = nil
+        suspendedAt = nil
+        // The background task, if any, lasts until the stream has been closed.
+        let backgroundTask = backgroundTask
+        self.backgroundTask = .invalid
+        if let audioRouteObserver { NotificationCenter.default.removeObserver(audioRouteObserver) }
+        audioRouteObserver = nil
+        networkMonitor.stop()
+        noticeTask?.cancel(); noticeTask = nil
         checkpointHistory(ended: true)
         inputBridge.detach()
         UIApplication.shared.isIdleTimerDisabled = false
         let transport = transport; self.transport = nil
         let renderer = renderer
-        Task { await transport?.close(); renderer.flush() }
+        Task {
+            await transport?.close(); renderer.flush()
+            if backgroundTask != .invalid { UIApplication.shared.endBackgroundTask(backgroundTask) }
+        }
+    }
+
+    /// The Home button, or anything else that sends the app away. A playing stream is held open,
+    /// out of sight, for `backgroundGrace`; anything else is closed at once as before.
+    private func enteredBackground() {
+        guard !stopped, suspendedAt == nil else { return }
+        guard videoActive, !failed, let transport else { leave(); return }
+        let task = UIApplication.shared.beginBackgroundTask(withName: "OpenNOW stream") { [weak self] in
+            // The system is about to suspend the app: close now, and give the task back in time.
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                let task = self.backgroundTask
+                self.backgroundTask = .invalid
+                self.backgroundGraceExpired(reason: "background time ran out")
+                if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
+            }
+        }
+        guard task != .invalid else { leave(); return }
+        backgroundTask = task
+        suspendedAt = ProcessInfo.processInfo.systemUptime
+        // Buttons held on the way out must not stay pressed in the game.
+        inputBridge.setControllerHUDActive(true)
+        Task { await transport.setSuspended(true) }
+        let grace = min(Self.backgroundGrace, max(0, UIApplication.shared.backgroundTimeRemaining - 5))
+        TVStreamLog.note(String(format: "stream held in background for up to %.0f s", grace))
+        tvStreamDebug(String(format: "[TVStream] background: holding the stream for up to %.0f s", grace))
+        backgroundGraceTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(grace))
+            guard !Task.isCancelled else { return }
+            self?.backgroundGraceExpired(reason: "away longer than the grace period")
+        }
+    }
+
+    private func backgroundGraceExpired(reason: String) {
+        guard suspendedAt != nil, !stopped else { return }
+        TVStreamLog.note("stream closed in background: \(reason)")
+        tvStreamDebug("[TVStream] background: closing, \(reason)")
+        leave()
+    }
+
+    /// Back from the Home screen in time: the picture returns with the next keyframe.
+    private func enteringForeground() {
+        guard let suspendedAt, !stopped, let transport else { return }
+        self.suspendedAt = nil
+        backgroundGraceTask?.cancel(); backgroundGraceTask = nil
+        let away = ProcessInfo.processInfo.systemUptime - suspendedAt
+        TVStreamLog.note(String(format: "stream resumed after %.1f s away", away))
+        tvStreamDebug(String(format: "[TVStream] background: back after %.1f s, resuming", away))
+        idleGuard?.noteActivity(at: ProcessInfo.processInfo.systemUptime)
+        // Blocks buttons still held from before until they are let go, as when the menu closes.
+        inputBridge.setControllerHUDActive(menu.visible)
+        renderer.markResume()
+        Task { await transport.setSuspended(false) }
+        let task = backgroundTask
+        backgroundTask = .invalid
+        if task != .invalid { UIApplication.shared.endBackgroundTask(task) }
     }
 
     func leave() { stop(); onClose() }
@@ -317,8 +449,11 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
     private func update(_ sample: NativeStreamNVSTSample) {
         guard !stopped, !failed else { return }
         if sample.decoded > 0 {
-            if !videoActive { tvStreamDebug("[TVStream] video active: \(sample.detail)") }
+            let firstFrame = !videoActive
+            if firstFrame { tvStreamDebug("[TVStream] video active: \(sample.detail)") }
             videoActive = true
+            // The stream's audio session is running by now, so the route is the one it plays on.
+            if firstFrame { refreshAudioRoute(announce: true) }
             if !reportedStable { reportedStable = true; onTransportStable() }
         }
         let now = ProcessInfo.processInfo.systemUptime
@@ -338,12 +473,24 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
             TVStreamFigure(label: "Format", value: sample.bitstream),
             TVStreamFigure(label: "Sound", value: sample.soundText),
             TVStreamFigure(label: "Thermal", value: thermal.tvLabel),
+            TVStreamFigure(label: "Network", value: networkKind == .unknown ? "–" : networkKind.label),
+            TVStreamFigure(label: "Audio Output", value: audioRoute?.figure ?? "–"),
         ]
+        let batteries = TVControllerBattery.all()
+        if !batteries.isEmpty {
+            figures.append(TVStreamFigure(label: batteries.count > 1 ? "Controllers" : "Controller",
+                                          value: batteries.map(\.label).joined(separator: " · ")))
+        }
+        checkBatteries(batteries)
+        if wifiTrouble.shouldReport(network: networkKind, lossPercent: reading.lossPercent, jitterMs: reading.jitterMs) {
+            TVStreamLog.note("wifi trouble: loss=\(reading.lossPercent)% jitter=\(reading.jitterMs)ms")
+            showNotice("Wi-Fi is dropping or delaying packets. An Ethernet cable usually keeps the stream steady.")
+        }
         onRuntimeSample(StreamRuntimeSample(timestamp: now, pingMs: reading.pingMs, bitrateKbps: reading.bitrateKbps,
             jitterMs: reading.jitterMs, fps: reading.decodedFPS, receivedFps: reading.receivedFPS,
             decodedFps: reading.decodedFPS, decodeMs: reading.decodeMs, packetsLostDelta: reading.packetsLostDelta,
             packetsReceivedDelta: reading.packetsReceivedDelta, packetLossPercent: reading.lossPercent,
-            resolution: reading.resolution, codec: codecLabel))
+            resolution: reading.resolution, codec: codecLabel, networkKind: networkKind))
         checkpointHistory(ended: false)
         // Every second that has levels, not only the stats line's one in five: the meter is reset
         // by each sample, and an intermittent centre channel must not read as silent.
@@ -465,16 +612,90 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
     }
 
     private func pollMenuHold() {
+        pollIdle()
         let held = GCController.controllers().contains { $0.extendedGamepad?.buttonMenu.isPressed ?? false }
         menuHoldPolls = held ? menuHoldPolls + 1 : 0
         guard !stopped, menuHoldPolls == Self.menuHoldThreshold, menuItems.isEmpty else { return }
         setMenuVisible(true)
     }
 
+    private func showNotice(_ text: String) {
+        notice = text
+        noticeTask?.cancel()
+        noticeTask = Task { [weak self] in
+            try? await Task.sleep(for: Self.noticeDuration)
+            guard !Task.isCancelled else { return }
+            self?.notice = nil
+        }
+    }
+
+    private func networkChanged(_ kind: SessionNetworkKind) {
+        guard !stopped, kind != networkKind else { return }
+        networkKind = kind
+        TVStreamLog.note("network \(kind.label)")
+        tvStreamDebug("[TVStream] network \(kind.label)")
+    }
+
+    /// Reads where the sound goes. A slow wireless output is pointed out when the stream starts on
+    /// it or moves to it, not again for the same output.
+    private func refreshAudioRoute(announce: Bool) {
+        guard !stopped, let route = TVAudioRoute.current() else { return }
+        let previous = audioRoute
+        audioRoute = route
+        guard route != previous else { return }
+        TVStreamLog.note("audio route \(route.figure)")
+        tvStreamDebug("[TVStream] audio route \(route.figure)")
+        if announce, videoActive, previous?.name != route.name, let text = route.notice { showNotice(text) }
+    }
+
+    private func checkBatteries(_ batteries: [TVControllerBattery]) {
+        for battery in batteries {
+            guard let player = battery.player, let level = battery.warningLevel,
+                  level < batteryWarned[player] ?? .max else { continue }
+            batteryWarned[player] = level
+            showNotice("Controller \(player) battery is at \(battery.percent ?? level)%.")
+        }
+    }
+
+    /// Counts down a stream nobody is playing. The clock runs from the first frame, and any change
+    /// in what the controllers, keyboard, mouse or remote are doing restarts it.
+    private func pollIdle() {
+        guard var idleGuard, !stopped else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        let signature = TVInputActivitySignature.current()
+        if signature != lastInputSignature || !videoActive || failed {
+            lastInputSignature = signature
+            idleGuard.noteActivity(at: now)
+        }
+        self.idleGuard = idleGuard
+        switch idleGuard.phase(at: now) {
+        case .active:
+            if idleSecondsLeft != nil { idleSecondsLeft = nil }
+        case .warning(let seconds):
+            if idleSecondsLeft == nil { tvStreamDebug("[TVStream] idle: countdown started") }
+            if idleSecondsLeft != seconds { idleSecondsLeft = seconds }
+        case .expired:
+            idleSecondsLeft = nil
+            TVStreamLog.note("idle for \(settings.streamIdleMinutes) min; \(idleAction.rawValue)")
+            tvStreamDebug("[TVStream] idle: \(idleAction.rawValue) after \(settings.streamIdleMinutes) min")
+            switch idleAction {
+            case .off: break
+            case .leaveStream: leave()
+            case .endSession: stop(); onEndSession?()
+            }
+        }
+    }
+
+    private func noteRemoteActivity() {
+        idleGuard?.noteActivity(at: ProcessInfo.processInfo.systemUptime)
+        idleSecondsLeft = nil
+    }
+
     /// Siri Remote buttons, passed on by the stream screen as UIKit presses. GameController reports
     /// every clickpad click as Button A, ring clicks included, so it cannot tell Down from Select.
     func remotePressed(_ type: UIPress.PressType) {
         guard !stopped else { return }
+        noteRemoteActivity()
         switch type {
         case .menu: if menuItems.isEmpty { setMenuVisible(true) } else { handleMenu(.back) }
         case .upArrow: handleMenu(.up)
@@ -506,8 +727,22 @@ extension TVStreamCoordinator {
             TVStreamFigure(label: "Format", value: "10-bit 4:2:0"),
             TVStreamFigure(label: "Sound", value: "5.1"),
             TVStreamFigure(label: "Thermal", value: ProcessInfo.processInfo.thermalState.tvLabel),
+            TVStreamFigure(label: "Network", value: "Wi-Fi"),
+            TVStreamFigure(label: "Audio Output", value: "HDMI · 18 ms"),
+            TVStreamFigure(label: "Controllers", value: "P1 62% · P2 charging"),
         ]
         setMenuVisible(true)
+    }
+
+    /// `--opennow-stream-menu-preview=idle`: the "Still playing?" countdown over the game.
+    func installNoticePreview() {
+        videoActive = true
+        notice = "AirPods Pro plays the sound about 182 ms late. Sound through the TV is in step with the picture."
+    }
+
+    func installIdlePreview() {
+        videoActive = true
+        idleSecondsLeft = 42
     }
 }
 #endif

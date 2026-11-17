@@ -1287,6 +1287,14 @@ struct SettingsView: View {
 
             #if os(tvOS)
             Section {
+                Toggle("Motion Controls", isOn: $store.settings.controllerMotionEnabled)
+            } header: {
+                Text("Motion")
+            } footer: {
+                Text("Sends a PS5 controller's gyroscope and accelerometer to the game, for games and Steam Input setups that aim or steer by tilting the controller. It works while the server takes the controller as a PlayStation controller, keeps the controller's sensors running and uses a little more of its battery. Applies to new sessions.")
+            }
+
+            Section {
                 Toggle("DualSense Trigger Effects", isOn: $store.settings.dualSensePassthrough)
                 settingsSlider("Rumble on Triggers", value: $store.settings.triggerRumbleStrength,
                     range: NativeStreamTriggerRumbleStrength.range, step: NativeStreamTriggerRumbleStrength.step,
@@ -1547,6 +1555,38 @@ struct SettingsView: View {
     }
 
     private var interfaceSoundSessionSection: some View {
+        Group {
+            interfaceSessionsSection
+            #if os(tvOS)
+            interfaceIdleSection
+            #endif
+        }
+    }
+
+    #if os(tvOS)
+    private var interfaceIdleSection: some View {
+        Section {
+            Picker("When Idle", selection: $store.settings.streamIdleAction) {
+                ForEach(StreamIdleAction.allCases) { action in
+                    Text(action.label).tag(action)
+                }
+            }
+            if store.settings.streamIdleAction != .off {
+                Picker("Idle Time", selection: $store.settings.streamIdleMinutes) {
+                    ForEach(StreamIdleAction.minuteChoices, id: \.self) { minutes in
+                        Text("\(minutes) min").tag(minutes)
+                    }
+                }
+            }
+        } header: {
+            Text("Idle Streams")
+        } footer: {
+            Text("After this long without any input, a one-minute \"Still playing?\" countdown appears; any button keeps playing. Leave Stream disconnects and lets the Apple TV sleep, but the game keeps running on the server until GeForce NOW ends it. End Session closes the game on the server, so unsaved progress is lost.")
+        }
+    }
+    #endif
+
+    private var interfaceSessionsSection: some View {
         Section {
             // The counter is drawn by the iOS stream controls.
             #if !os(tvOS)

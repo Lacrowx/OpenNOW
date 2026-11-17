@@ -275,9 +275,10 @@ public enum NvstHidPassthrough {
             public var rightStickX: Int16
             public var rightStickY: Int16
             public var touchpadPressed: Bool
+            public var motion: Motion
 
             public init(buttons: UInt16, leftTrigger: UInt8, rightTrigger: UInt8, leftStickX: Int16, leftStickY: Int16,
-                        rightStickX: Int16, rightStickY: Int16, touchpadPressed: Bool = false) {
+                        rightStickX: Int16, rightStickY: Int16, touchpadPressed: Bool = false, motion: Motion = .zero) {
                 self.buttons = buttons
                 self.leftTrigger = leftTrigger
                 self.rightTrigger = rightTrigger
@@ -286,6 +287,44 @@ public enum NvstHidPassthrough {
                 self.rightStickX = rightStickX
                 self.rightStickY = rightStickY
                 self.touchpadPressed = touchpadPressed
+                self.motion = motion
+            }
+        }
+
+        /// Gyroscope and accelerometer readings in the raw units of both Sony pads, which the
+        /// neutral calibration (`DualSense.featureReport(0x05)`) describes: about 16.4 per degree
+        /// a second, and 8192 per g. Axes: X to the right, Y up, Z towards the player; the gyro
+        /// turns about the same axes (pitch, yaw, roll). Zero means "no sensor", as a pad without
+        /// motion data reports.
+        public struct Motion: Equatable, Sendable {
+            public var gyroX: Int16, gyroY: Int16, gyroZ: Int16
+            public var accelX: Int16, accelY: Int16, accelZ: Int16
+
+            public static let zero = Motion(gyroX: 0, gyroY: 0, gyroZ: 0, accelX: 0, accelY: 0, accelZ: 0)
+            public static let gyroUnitsPerDegreePerSecond = 8856.0 / 540.0
+            public static let accelUnitsPerG = 8192.0
+
+            public init(gyroX: Int16, gyroY: Int16, gyroZ: Int16, accelX: Int16, accelY: Int16, accelZ: Int16) {
+                (self.gyroX, self.gyroY, self.gyroZ) = (gyroX, gyroY, gyroZ)
+                (self.accelX, self.accelY, self.accelZ) = (accelX, accelY, accelZ)
+            }
+
+            /// From degrees a second and g, clamped to the sensor range.
+            public init(degreesPerSecond gyro: (Double, Double, Double), g accel: (Double, Double, Double)) {
+                func raw(_ value: Double, _ scale: Double) -> Int16 {
+                    Int16(min(max((value * scale).rounded(), Double(Int16.min)), Double(Int16.max)))
+                }
+                self.init(gyroX: raw(gyro.0, Self.gyroUnitsPerDegreePerSecond), gyroY: raw(gyro.1, Self.gyroUnitsPerDegreePerSecond),
+                          gyroZ: raw(gyro.2, Self.gyroUnitsPerDegreePerSecond),
+                          accelX: raw(accel.0, Self.accelUnitsPerG), accelY: raw(accel.1, Self.accelUnitsPerG),
+                          accelZ: raw(accel.2, Self.accelUnitsPerG))
+            }
+
+            /// Gyro X, Y, Z then accelerometer X, Y, Z, each little-endian: the twelve bytes both
+            /// pads carry, at 13 in a DualShock 4 report and at 16 in a DualSense one.
+            static func bytes(_ motion: Motion) -> [UInt8] {
+                [motion.gyroX, motion.gyroY, motion.gyroZ, motion.accelX, motion.accelY, motion.accelZ]
+                    .flatMap { [UInt8(truncatingIfNeeded: $0), UInt8(truncatingIfNeeded: $0 >> 8)] }
             }
         }
 
@@ -332,8 +371,9 @@ public enum NvstHidPassthrough {
         }
 
         /// The 64-byte USB input report `0x01`, laid out as the official synthesizer fills it:
-        /// sticks, buttons, triggers, the 5.33 µs timestamp, "cable connected, battery full" and
-        /// one touch packet with both fingers up. Motion data stays zero there too.
+        /// sticks, buttons, triggers, the 5.33 µs timestamp, motion, "cable connected, battery
+        /// full" and one touch packet with both fingers up. The official synthesizer leaves motion
+        /// at zero; it is filled here only when the player turned motion controls on.
         public static func report(_ state: State, gamepadIndex: Int, timestampMicroseconds: UInt64) -> Report {
             var data = [UInt8](repeating: 0, count: reportLength)
             data[0] = 0x01
@@ -344,6 +384,7 @@ public enum NvstHidPassthrough {
             let ticks = UInt16(truncatingIfNeeded: (timestampMicroseconds &* 3) >> 4)
             data[10] = UInt8(truncatingIfNeeded: ticks)
             data[11] = UInt8(truncatingIfNeeded: ticks >> 8)
+            data[13...24] = Motion.bytes(state.motion)[...]
             data[30] = 0x1b
             data[33] = 1
             data[35] = 0x80
@@ -404,8 +445,8 @@ public enum NvstHidPassthrough {
 
         /// The 64-byte USB input report `0x01`: sticks, triggers, the sequence number
         /// `TransformPacketDS5::transformInput` uses to drop repeats, buttons, the sensor timestamp
-        /// it stamps (a third of a microsecond per tick), both touch points up and "charged, on a
-        /// cable". Motion data stays zero. The report is addressed to the request id; the
+        /// it stamps (a third of a microsecond per tick), motion, both touch points up and
+        /// "charged, on a cable". The report is addressed to the request id; the
         /// transport swaps in the seat's device id.
         public static func report(_ state: State, gamepadIndex: Int, sequence: UInt8, timestampMicroseconds: UInt64) -> Report {
             var data = [UInt8](repeating: 0, count: reportLength)
@@ -415,6 +456,7 @@ public enum NvstHidPassthrough {
             data[6] = state.rightTrigger
             data[7] = sequence
             data[8...10] = SynthesizedDualShock4.buttonBytes(state)[...]
+            data[16...27] = SynthesizedDualShock4.Motion.bytes(state.motion)[...]
             let ticks = UInt32(truncatingIfNeeded: timestampMicroseconds &* 3)
             for byte in 0..<4 { data[28 + byte] = UInt8(truncatingIfNeeded: ticks >> (8 * UInt32(byte))) }
             data[33] = 0x80

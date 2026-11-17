@@ -15,4 +15,9 @@ enum TVStreamLog {
     static func failure(_ reason: String) {
         logger.error("stream failed: \(reason, privacy: .public)")
     }
+
+    /// Something the app decided on its own during a stream, kept in the unified log in every build.
+    static func note(_ message: String) {
+        logger.notice("\(message, privacy: .public)")
+    }
 }

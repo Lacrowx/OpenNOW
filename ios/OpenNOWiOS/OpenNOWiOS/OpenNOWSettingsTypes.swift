@@ -65,10 +65,10 @@ enum SettingsPage: String, CaseIterable, Hashable, Identifiable {
         case .video: return String(localized: "Display mode, codec, color, and HDR")
         case .connection: return String(localized: "Region, server selector, and proxy")
         case .keyboard: return String(localized: "Game sound, layout, and language")
-        case .controller: return String(localized: "Vibration")
+        case .controller: return String(localized: "Vibration, motion and triggers")
         case .catalog: return String(localized: "Launch page and cards")
         case .stats: return String(localized: "HUD position, metrics, and clock")
-        case .sessions: return String(localized: "Report and ready chime")
+        case .sessions: return String(localized: "Report, ready chime and idle streams")
         default: return nil
         }
     }
@@ -90,7 +90,7 @@ enum SettingsPage: String, CaseIterable, Hashable, Identifiable {
         case .catalog: return "interface store library launch page console home compact cards titles favorite favourite badge size labels background wallpaper photo image"
         case .stats: return "interface stream statistics hud overlay fps displayed ping latency decode bitrate packet loss renderer gpu codec resolution server battery network time clock metrics position"
         case .streamControls: return "interface stream buttons immersive hide controls afk idle keep awake"
-        case .sessions: return "interface session counter timer clock report quality summary queue ready chime sound live activities notifications"
+        case .sessions: return "interface session counter timer clock report quality summary queue ready chime sound live activities notifications idle afk sleep"
         case .experimental: return "advanced experimental l4s latency networking"
         case .diagnostics: return "advanced support bug problem report issue feedback codec decoders hardware probe debug network log logs export upload redacted diagnostics copy summary"
         }
@@ -581,5 +581,32 @@ enum AppLanguage {
 
     static func label(for tag: String) -> String {
         supported.first { $0.tag == tag }?.label ?? tag
+    }
+}
+
+/// What an Apple TV stream does after a stretch with no controller, keyboard, mouse or remote input.
+/// A "Still playing?" countdown comes first, and any input during it keeps the stream.
+enum StreamIdleAction: String, Codable, CaseIterable, Identifiable {
+    case off
+    /// Disconnects; the game keeps running on the host until GFN ends it, and the Apple TV can sleep.
+    case leaveStream
+    /// Ends the session, which closes the game on the host.
+    case endSession
+
+    static let defaultMinutes = 20
+    static let minuteChoices = [10, 20, 30, 60]
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .off: return String(localized: "Off")
+        case .leaveStream: return String(localized: "Leave Stream")
+        case .endSession: return String(localized: "End Session")
+        }
+    }
+
+    static func normalizedMinutes(_ minutes: Int) -> Int {
+        minuteChoices.contains(minutes) ? minutes : defaultMinutes
     }
 }

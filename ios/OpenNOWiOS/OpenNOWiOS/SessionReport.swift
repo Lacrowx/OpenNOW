@@ -690,6 +690,20 @@ final class StreamSessionReportAccumulator {
             )
         }
 
+        #if os(tvOS)
+        // An Apple TV usually sits next to the router or a wall socket; a cable is the fix that sticks.
+        if networkKind == .wifi, (packetLossPercent ?? 0) > 1.0 || (averageJitterMs ?? 0) > 15 {
+            findings.append(
+                SessionReportFinding(
+                    title: "Connect the Apple TV with Ethernet",
+                    detail: "This session ran over Wi-Fi and lost or delayed packets. A cable to the router "
+                        + "removes most of that; if that is not possible, use a 5 GHz or 6 GHz network close to the router.",
+                    kind: .warning
+                )
+            )
+        }
+        #endif
+
         if let loss = packetLossPercent, loss > 1.0 {
             findings.append(
                 SessionReportFinding(

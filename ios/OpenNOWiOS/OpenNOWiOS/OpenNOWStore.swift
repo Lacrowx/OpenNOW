@@ -1151,6 +1151,11 @@ struct AppSettings: Codable, Equatable {
     var dualSensePassthrough: Bool = false
     /// Experimental: how strongly a game's body rumble also plays on a DualSense's triggers, 0 for off.
     var triggerRumbleStrength: Double = 0
+    /// Apple TV: send a controller's gyroscope and accelerometer with the pad's reports.
+    var controllerMotionEnabled: Bool = false
+    /// Apple TV: what a stream does after `streamIdleMinutes` without input.
+    var streamIdleAction: StreamIdleAction = .off
+    var streamIdleMinutes: Int = StreamIdleAction.defaultMinutes
     var controllerShortcuts = NativeStreamControllerShortcuts()
     var launchPage: AppLaunchPage = .store
     var posterSizeScale: Double = 1
@@ -1270,6 +1275,9 @@ struct AppSettings: Codable, Equatable {
         case controllerRumbleStrength
         case dualSensePassthrough
         case triggerRumbleStrength
+        case controllerMotionEnabled
+        case streamIdleAction
+        case streamIdleMinutes
         case controllerShortcuts
         case launchPage
         case posterSizeScale
@@ -1401,6 +1409,10 @@ struct AppSettings: Codable, Equatable {
         dualSensePassthrough = try container.decodeIfPresent(Bool.self, forKey: .dualSensePassthrough) ?? false
         triggerRumbleStrength = NativeStreamTriggerRumbleStrength.normalize(
             try container.decodeIfPresent(Double.self, forKey: .triggerRumbleStrength) ?? 0)
+        controllerMotionEnabled = try container.decodeIfPresent(Bool.self, forKey: .controllerMotionEnabled) ?? false
+        streamIdleAction = (try? container.decodeIfPresent(StreamIdleAction.self, forKey: .streamIdleAction)) ?? .off
+        streamIdleMinutes = StreamIdleAction.normalizedMinutes(
+            try container.decodeIfPresent(Int.self, forKey: .streamIdleMinutes) ?? StreamIdleAction.defaultMinutes)
         controllerShortcuts = try container.decodeIfPresent(NativeStreamControllerShortcuts.self, forKey: .controllerShortcuts) ?? .init()
         launchPage = try container.decodeIfPresent(AppLaunchPage.self, forKey: .launchPage) ?? .store
         posterSizeScale = try container.decodeIfPresent(Double.self, forKey: .posterSizeScale) ?? 1

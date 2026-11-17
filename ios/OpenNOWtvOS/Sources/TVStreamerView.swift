@@ -117,6 +117,17 @@ private struct TVStreamOverlay: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .bottomTrailing) { if !coordinator.failed { TVControllerNotice(videoActive: coordinator.videoActive) } }
+        .overlay(alignment: .bottomLeading) {
+            if let notice = coordinator.notice, !coordinator.failed, !coordinator.menuVisible {
+                TVStreamNoticePill(text: notice).transition(.opacity)
+            }
+        }
+        .overlay {
+            if let seconds = coordinator.idleSecondsLeft {
+                TVStreamIdleNotice(secondsLeft: seconds, action: coordinator.idleAction)
+                    .transition(.opacity)
+            }
+        }
         .overlay(alignment: coordinator.statsPosition.alignment) {
             // The menu shows the same figures, and the strip would lie over it.
             if coordinator.statsVisible, coordinator.videoActive, !coordinator.failed, !coordinator.menuVisible,
@@ -126,6 +137,8 @@ private struct TVStreamOverlay: View {
         .environment(\.openNowAccent, accent)
         .animation(.easeOut(duration: TVConsoleTheme.focusDuration), value: coordinator.failed || coordinator.menuVisible)
         .animation(.easeOut(duration: TVConsoleTheme.enterDuration), value: coordinator.videoActive)
+        .animation(.easeOut(duration: TVConsoleTheme.focusDuration), value: coordinator.idleSecondsLeft == nil)
+        .animation(.easeOut(duration: TVConsoleTheme.enterDuration), value: coordinator.notice)
     }
 
     /// One line of the figures chosen in Settings, drawn as the shell's status pill, inside the
@@ -154,6 +167,62 @@ private struct TVStreamOverlay: View {
 
     private var seam: some View {
         Rectangle().fill(TVConsoleTheme.seam).frame(width: 1, height: 18)
+    }
+}
+
+/// A passing message over the game, inside the TV's title-safe area: slow wireless sound, Wi-Fi
+/// trouble, a controller running low.
+private struct TVStreamNoticePill: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 22, weight: .bold))
+                .foregroundStyle(TVConsoleTheme.coral)
+            Text(text)
+                .font(TVConsoleTheme.display(19, weight: 700))
+                .foregroundStyle(TVConsoleTheme.label)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+        .frame(maxWidth: 860, alignment: .leading)
+        .tvConsoleGlass(radius: 26, strong: true)
+        .padding(.leading, 80)
+        .padding(.bottom, 60)
+    }
+}
+
+/// "Still playing?": the countdown before an idle stream is left or ended. Any input dismisses it.
+private struct TVStreamIdleNotice: View {
+    let secondsLeft: Int
+    let action: StreamIdleAction
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Text("Still playing?")
+                .font(TVConsoleTheme.display(40))
+                .foregroundStyle(TVConsoleTheme.label)
+            Text(action == .endSession
+                 ? "The session ends in \(secondsLeft) s and the game closes on the server."
+                 : "The stream closes in \(secondsLeft) s. The game keeps running on the server for a while.")
+                .font(TVConsoleTheme.display(21, weight: 600))
+                .foregroundStyle(TVConsoleTheme.textMuted)
+                .monospacedDigit()
+                .multilineTextAlignment(.center)
+            Text("Press any button to keep playing")
+                .font(TVConsoleTheme.mono(15))
+                .tracking(1.4)
+                .textCase(.uppercase)
+                .foregroundStyle(TVConsoleTheme.label)
+                .padding(.top, 8)
+        }
+        .padding(.horizontal, 56)
+        .padding(.vertical, 40)
+        .frame(maxWidth: 900)
+        .tvConsoleGlass(radius: 40, strong: true)
     }
 }
 
@@ -197,6 +266,13 @@ private struct TVStreamConnectingView: View {
                         .foregroundStyle(TVConsoleTheme.textMuted)
                         .lineLimit(1)
                 }
+                if coordinator.networkKind != .unknown {
+                    Rectangle().fill(TVConsoleTheme.seam).frame(width: 1, height: 22)
+                    Text(coordinator.networkKind.label.uppercased())
+                        .font(TVConsoleTheme.mono(14))
+                        .tracking(1.4)
+                        .foregroundStyle(TVConsoleTheme.textMuted)
+                }
             }
             .frame(height: 72)
         }
@@ -210,7 +286,8 @@ private struct TVStreamConnectingView: View {
 extension TVStreamerView {
     /// `--opennow-stream-menu-preview`: the stream menu over game artwork. `=failed` shows the
     /// failed-stream panel, `=confirm` the question before ending the session, `=connecting` the
-    /// screen shown until the first frame, `=hud` the stats strip over the game.
+    /// screen shown until the first frame, `=hud` the stats strip over the game, `=idle` the
+    /// "Still playing?" countdown, `=notice` a passing notice over the game.
     static func menuPreview(state: String) -> some View {
         TVStreamMenuPreview(state: state)
     }
@@ -256,6 +333,8 @@ private struct TVStreamMenuPreview: View {
             .ignoresSafeArea()
         .onAppear {
             guard state != "connecting" else { return }
+            guard state != "idle" else { coordinator.installIdlePreview(); return }
+            guard state != "notice" else { coordinator.installNoticePreview(); return }
             coordinator.installMenuPreview(failed: state == "failed")
             switch state {
             case "confirm":
