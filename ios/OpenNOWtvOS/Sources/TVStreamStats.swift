@@ -112,3 +112,8 @@ extension ProcessInfo.ThermalState {
         }
     }
 }
+
+extension NativeStreamNVSTSample {
+    /// The stream menu's "Sound" figure.
+    var soundText: String { audioFormat ?? "–" }
+}

@@ -61,6 +61,11 @@ struct NativeStreamNVSTSample: Sendable {
     let pixelFormat: String
     let bitstream: String
     let detail: String
+    /// "Stereo", "5.1" or "7.1" as decoded; nil until the seat's audio layout is known.
+    var audioFormat: String? = nil
+    /// Per decoded channel, level and level above 200 Hz in dBFS. Empty outside Debug builds and
+    /// while the stream is stereo.
+    var audioLevels = ""
 }
 
 /// A protocol keeps the iOS 17 hardware API isolated from the app's iOS 16 deployment target.
@@ -78,6 +83,7 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
     private let profile: StreamVideoProfile
     private let codec: NativeStreamVideoCodec
     private let displayFPS: Int
+    private let audioChannelCount: Int
     private let onFrame: @Sendable (NativeStreamNVSTFrame) -> Void
     private let onSample: @Sendable (NativeStreamNVSTSample) -> Void
     private let onFailure: @Sendable (String) -> Void
@@ -131,7 +137,7 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
     private var touchSendFailures = 0
 
     init(allocation: ActiveSession, settings: AppSettings, profile: StreamVideoProfile,
-         codec: NativeStreamVideoCodec, displayFPS: Int,
+         codec: NativeStreamVideoCodec, displayFPS: Int, audioChannelCount: Int = 2,
          onFrame: @escaping @Sendable (NativeStreamNVSTFrame) -> Void,
          onSample: @escaping @Sendable (NativeStreamNVSTSample) -> Void,
          onFailure: @escaping @Sendable (String) -> Void,
@@ -141,6 +147,7 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
          onDiagnostic: (@Sendable (String) -> Void)? = nil) {
         self.allocation = allocation; self.settings = settings; self.profile = profile
         self.codec = codec; self.displayFPS = displayFPS
+        self.audioChannelCount = audioChannelCount
         self.onFrame = onFrame; self.onSample = onSample; self.onFailure = onFailure; self.onHaptics = onHaptics
         self.onTermination = onTermination
         self.onProgress = onProgress
@@ -160,7 +167,7 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
         let input = NvstRtspNegotiationInput(sessionID: allocation.id, rtspsEndpoints: endpoints,
             resolution: profile.resolutionString, fps: profile.fps, codec: codec == .h265 ? "HEVC" : codec.rawValue,
             bitrateKbps: profile.maxBitrateKbps, maximumBitrateKbps: profile.maxBitrateKbps,
-            colorQuality: color, hdrEnabled: settings.hdrEnabled, audioChannelCount: 2, rtcpOnSctp: true,
+            colorQuality: color, hdrEnabled: settings.hdrEnabled, audioChannelCount: audioChannelCount, rtcpOnSctp: true,
             disablesOwdCongestionControl: false, vsyncMode: .adaptive,
             announceOverrides: [("x-nv-vqos[0].dfc.enable", "0")])
         do {
@@ -216,10 +223,11 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
             nativeBundle.onHapticEvents = { [weak self] events in Task { await self?.ifCurrent(generation) { $0.onHaptics(events) } } }
             nativeBundle.onHidOutputReport = { [weak self] report in Task { await self?.ifCurrent(generation) { $0.hidOutput(report) } } }
             nativeBundle.onHidChangeResponse = { [weak self] response in Task { await self?.ifCurrent(generation) { $0.hidChangeResponse(response) } } }
+            nativeBundle.onAudioDiagnostic = { [onDiagnostic] message in onDiagnostic?("audio: \(message)") }
             // The host's native bundle must offer the mic; legacy mic carriage is not announced.
             let mic = microphoneOffered && settings.keepMicEnabled
                 ? NvstNativeBundle.MicrophoneSetup(volume: 1, initiallyEnabled: true) : nil
-            let identity = try await nativeBundle.prepare(microphone: mic, audioChannelCount: 2)
+            let identity = try await nativeBundle.prepare(microphone: mic, audioChannelCount: audioChannelCount)
             guard !stopped else { nativeBundle.close(); return nil }
             nativeBundle.setRemoteAudioMuted(settings.streamerPreferences.audioMuted)
             pipeline?.attach(bundle: nativeBundle)
@@ -574,11 +582,14 @@ actor NativeStreamNVST: NativeStreamNVSTTransport {
         guard !stopped else { return }
         let state = pipeline.snapshot
         let detail = "native NVST hardware=\(decoder.isHardwareAccelerated) thermal=\(ProcessInfo.processInfo.thermalState.rawValue) lowPower=\(ProcessInfo.processInfo.isLowPowerModeEnabled) resolution=\(decoder.decodedResolution ?? "pending") output=\(decoder.outputPixelFormatName) bitstream=\(decoder.bitstreamFormat?.summary ?? "pending") requestedColor=\(StreamSettingsResolver.colorQuality(for: settings).rawValue) requestedHDR=\(settings.hdrEnabled) sessions=\(decoder.sessionCreationCount) failed=\(decoder.failedFrameCount) errors=\(decoder.failureStatusSummary) decoderStages=\(decoder.stageTimingSummary) recovery[requests=\(keyframeRequests) control=\(controlKeyframeRequests) udp=\(udpKeyframeRequests) keyframes=\(stats.keyframesEmitted) feedback=\(bundle?.isFeedbackChannelOpen == true)] buffer=\(receiver.receiveBufferBytes) ack=\(state.frameAcksSent) pacing=\(state.pacingReportsSent) fec=\(stats.recoveredPackets) nack[requests=\(stats.nack.requestsSent) packets=\(stats.nack.packetsRequested) resent=\(stats.nack.packetsReceived)] auth=\(stats.authenticatedPackets) \(state.timingSummary)"
-        onSample(NativeStreamNVSTSample(received: counters.framesEmitted, decoded: decoded, bytes: counters.bytesReceived,
+        var nvstSample = NativeStreamNVSTSample(received: counters.framesEmitted, decoded: decoded, bytes: counters.bytesReceived,
             lost: stats.finalizedLossPackets, packets: stats.authenticatedPackets, resolution: decoder.decodedResolution,
             decodeMilliseconds: state.decodeP50Milliseconds, pingMilliseconds: ping >= 0 ? ping : nil,
             jitterMilliseconds: Double(stats.lastJitter) / 90, hardware: decoder.isHardwareAccelerated,
-            pixelFormat: decoder.outputPixelFormatName, bitstream: decoder.bitstreamFormat?.summary ?? "pending", detail: detail))
+            pixelFormat: decoder.outputPixelFormatName, bitstream: decoder.bitstreamFormat?.summary ?? "pending", detail: detail)
+        nvstSample.audioFormat = bundle?.audioFormatLabel
+        nvstSample.audioLevels = bundle?.takeAudioChannelLevels() ?? ""
+        onSample(nvstSample)
     }
 
     private func fail(_ reason: String) {

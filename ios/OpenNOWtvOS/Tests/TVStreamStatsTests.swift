@@ -119,4 +119,11 @@ final class TVStreamStatsTests: XCTestCase {
         XCTAssertEqual(ProcessInfo.ThermalState.critical.tvHUDText, "Apple TV too hot")
         XCTAssertEqual(ProcessInfo.ThermalState.fair.tvLabel, "Warm")
     }
+
+    func testTheSoundFigureShowsTheFormatOrADashUntilItIsKnown() {
+        var known = sample()
+        known.audioFormat = "5.1 (stereo output)"
+        XCTAssertEqual(known.soundText, "5.1 (stereo output)")
+        XCTAssertEqual(sample().soundText, "–")
+    }
 }

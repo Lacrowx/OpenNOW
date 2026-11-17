@@ -223,8 +223,11 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
         renderer.onFormatChange = { [weak self] format in
             Task { @MainActor in self?.videoFormatChanged(format, fps: fps) }
         }
+        let audioChannels = StreamSettingsResolver.audioChannelCount(for: settings)
+        tvStreamDebug("[TVStream] audio output carries \(TVAudioOutput.channels) channels, asking the seat for \(audioChannels)")
         let transport = NativeStreamNVST(allocation: session, settings: settings, profile: profile, codec: codec,
             displayFPS: max(profile.fps, UIScreen.main.maximumFramesPerSecond),
+            audioChannelCount: audioChannels,
             onFrame: { renderer.enqueue($0) },
             onSample: { [weak self] sample in Task { @MainActor in self?.update(sample) } },
             onFailure: { [weak self] reason in Task { @MainActor in self?.transportFailed(reason) } },
@@ -332,6 +335,7 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
             TVStreamFigure(label: "Decode", value: reading.decodeMs.map { String(format: "%.1f ms", $0) } ?? "–"),
             TVStreamFigure(label: "Packets lost", value: "\(sample.lost)"),
             TVStreamFigure(label: "Format", value: sample.bitstream),
+            TVStreamFigure(label: "Sound", value: sample.soundText),
             TVStreamFigure(label: "Thermal", value: thermal.tvLabel),
         ]
         onRuntimeSample(StreamRuntimeSample(timestamp: now, pingMs: reading.pingMs, bitrateKbps: reading.bitrateKbps,
@@ -351,6 +355,9 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
                      ping, sample.jitterMilliseconds, sample.lost, inputSends, inputRawAgeMin * 1000, input.count,
                      input.eventAge / count * 1000, input.eventAgeMax * 1000,
                      input.send / count * 1000, input.sendMax * 1000) + sample.detail)
+        if !sample.audioLevels.isEmpty {
+            tvStreamDebug("[TVStream] audio \(sample.audioFormat ?? "pending") dBFS all/above200Hz per channel: \(sample.audioLevels)")
+        }
         inputTimings = (0, 0, 0, 0, 0)
         inputSends = 0
         inputRawAgeMin = .infinity
@@ -494,6 +501,7 @@ extension TVStreamCoordinator {
             TVStreamFigure(label: "Decode", value: "5.8 ms"),
             TVStreamFigure(label: "Packets lost", value: "12"),
             TVStreamFigure(label: "Format", value: "10-bit 4:2:0"),
+            TVStreamFigure(label: "Sound", value: "5.1"),
             TVStreamFigure(label: "Thermal", value: ProcessInfo.processInfo.thermalState.tvLabel),
         ]
         setMenuVisible(true)
