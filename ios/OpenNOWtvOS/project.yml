@@ -41,6 +41,7 @@ targets:
           - NVST/UPSTREAM.json
           - NativeStreamPresentation.swift
       - path: Sources
+      - path: Shared
       - path: Resources
       - path: TVAssets.xcassets
     dependencies:
@@ -48,6 +49,12 @@ targets:
         embed: false
       - framework: Frameworks/usrsctp.xcframework
         embed: false
+      - target: OpenNOWtvOSTopShelf
+    # The Top Shelf extension reads what the app writes through this group.
+    entitlements:
+      path: OpenNOWtvOS.entitlements
+      properties:
+        com.apple.security.application-groups: [group.$(OPENNOW_TVOS_BUNDLE_ID)]
     info:
       path: Info.plist
       properties:
@@ -68,6 +75,7 @@ targets:
         LSApplicationCategoryType: public.app-category.games
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities: [arm64]
+        OpenNOWAppGroup: group.$(OPENNOW_TVOS_BUNDLE_ID)
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: $(OPENNOW_TVOS_BUNDLE_ID)
@@ -77,6 +85,34 @@ targets:
         TARGETED_DEVICE_FAMILY: "3"
         ASSETCATALOG_COMPILER_APPICON_NAME: "App Icon & Top Shelf Image"
         SWIFT_EMIT_LOC_STRINGS: YES
+  # The Top Shelf above the app on the Apple TV Home screen: the running game and the recently
+  # played ones, from the snapshot the app saves in the shared app group.
+  OpenNOWtvOSTopShelf:
+    type: app-extension
+    platform: tvOS
+    sources:
+      - path: TopShelf
+      - path: Shared
+    entitlements:
+      path: TopShelf/TopShelf.entitlements
+      properties:
+        com.apple.security.application-groups: [group.$(OPENNOW_TVOS_BUNDLE_ID)]
+    info:
+      path: TopShelf/Info.plist
+      properties:
+        CFBundleDisplayName: OpenNOW Top Shelf
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        OpenNOWAppGroup: group.$(OPENNOW_TVOS_BUNDLE_ID)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.tv-top-shelf
+          NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).TopShelfContentProvider
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: $(OPENNOW_TVOS_BUNDLE_ID).topshelf
+        PRODUCT_NAME: OpenNOWTopShelf
+        TARGETED_DEVICE_FAMILY: "3"
+        APPLICATION_EXTENSION_API_ONLY: YES
   # The iOS project's NVST protocol tests, run against the tvOS build of the same sources, plus
   # the tests for the tvOS-only sources.
   OpenNOWtvOSTests:

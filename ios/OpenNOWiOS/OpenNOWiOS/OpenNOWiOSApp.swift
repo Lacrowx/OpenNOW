@@ -109,6 +109,9 @@ struct OpenNOWiOSApp: App {
                 .onOpenURL { url in
                     store.handleIncomingURL(url)
                 }
+                #if os(tvOS)
+                .background { TVTopShelfPublisher(store: store) }
+                #endif
         }
     }
 }
