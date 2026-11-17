@@ -89,6 +89,66 @@ struct NvstAudioPlacementTests {
                 == [.frontLeft, .frontRight, .frontCenter, .lowFrequency, .sideLeft, .sideRight, .backLeft, .backRight])
     }
 
+    /// A route whose only surround pair is labelled "direct" carries a 5.1 layout's rear pair there.
+    @Test func aRoutesOnlyDirectSurroundPairIsTheRearPair() {
+        let labels = [kAudioChannelLabel_Left, kAudioChannelLabel_Right, kAudioChannelLabel_Center,
+                      kAudioChannelLabel_LFEScreen, kAudioChannelLabel_LeftSurroundDirect,
+                      kAudioChannelLabel_RightSurroundDirect]
+        let device = NvstAudioPlacement.speakers(forChannelLabels: labels, channelCount: 6)
+        #expect(device == [.frontLeft, .frontRight, .frontCenter, .lowFrequency, .backLeft, .backRight])
+        let placement = NvstAudioPlacement(layout: .surround51, deviceSpeakers: device)
+        let samples = frame(.surround51, [.backLeft: 0.5, .backRight: -0.5])
+        #expect(placement.render(samples, frames: 1) == [0, 0, 0, 0, 16384, -16384])
+        // Beside a plain surround pair, the direct pair stays the side pair.
+        let sevenOne = Array(labels.prefix(4)) + [kAudioChannelLabel_LeftSurround, kAudioChannelLabel_RightSurround,
+                                                   kAudioChannelLabel_LeftSurroundDirect, kAudioChannelLabel_RightSurroundDirect]
+        #expect(NvstAudioPlacement.speakers(forChannelLabels: sevenOne, channelCount: 8)
+                == [.frontLeft, .frontRight, .frontCenter, .lowFrequency, .backLeft, .backRight, .sideLeft, .sideRight])
+    }
+
+    /// A device that lists its speakers in another order than the layout still gets each
+    /// decoded value on the device channel of that speaker.
+    @Test func aDeviceInAnotherOrderGetsEachValueOnItsSpeaker() {
+        let labels = [kAudioChannelLabel_Left, kAudioChannelLabel_Right, kAudioChannelLabel_LeftSurround,
+                      kAudioChannelLabel_RightSurround, kAudioChannelLabel_Center, kAudioChannelLabel_LFEScreen]
+        let device = NvstAudioPlacement.speakers(forChannelLabels: labels, channelCount: 6)
+        let placement = NvstAudioPlacement(layout: .surround51, deviceSpeakers: device)
+        let samples = frame(.surround51, [.frontLeft: 0.1, .frontRight: 0.2, .frontCenter: 0.3,
+                                          .lowFrequency: 0.4, .backLeft: 0.5, .backRight: 0.6])
+        #expect(placement.render(samples, frames: 1)
+                == [0.1, 0.2, 0.5, 0.6, 0.3, 0.4].map(NvstCoreAudioFormat.clamped16))
+    }
+
+    /// 7.1 on a six-channel device folds to stereo; the device's other channels stay silent.
+    @Test func sevenOneOnASixChannelDeviceFoldsToStereo() {
+        let placement = NvstAudioPlacement(layout: .surround71,
+                                           deviceSpeakers: NvstAudioPlacement.defaultSpeakers(channelCount: 6))
+        #expect(placement.isDownmix)
+        let samples = frame(.surround71, [.frontLeft: 0.1, .frontRight: 0.2, .frontCenter: 0.1, .lowFrequency: 0.9,
+                                          .backLeft: 0.1, .backRight: 0.1, .sideLeft: 0.1, .sideRight: 0.2])
+        let output = placement.render(samples, frames: 1)
+        let gain = NvstAudioPlacement.surroundFoldGain
+        #expect(output[0] == NvstCoreAudioFormat.clamped16(0.1 + gain * 0.1 + gain * 0.1 + gain * 0.1))
+        #expect(output[1] == NvstCoreAudioFormat.clamped16(0.2 + gain * 0.1 + gain * 0.1 + gain * 0.2))
+        #expect(Array(output[2...]) == [0, 0, 0, 0])
+    }
+
+    /// A surround layout on a one-channel device is the average of its stereo fold.
+    @Test func surroundOnAOneChannelDeviceIsTheAverageOfTheFold() {
+        let placement = NvstAudioPlacement(layout: .surround51,
+                                           deviceSpeakers: NvstAudioPlacement.defaultSpeakers(channelCount: 1))
+        #expect(placement.isDownmix)
+        #expect(placement.deviceChannels == 1)
+        let samples = frame(.surround51, [.frontLeft: 0.2, .frontRight: 0.1, .frontCenter: 0.1,
+                                          .lowFrequency: 0.9, .backLeft: 0.1, .backRight: 0.2])
+        let gain = NvstAudioPlacement.surroundFoldGain
+        let left: Float = 0.2 + gain * 0.1 + gain * 0.1
+        let right: Float = 0.1 + gain * 0.1 + gain * 0.2
+        let output = placement.render(samples, frames: 1)
+        #expect(output.count == 1)
+        #expect(abs(Int(output[0]) - Int(NvstCoreAudioFormat.clamped16((left + right) / 2))) <= 1)
+    }
+
     @Test func unusableLabelsFallBackToTheDefaultOrder() {
         let unknown = [UInt32](repeating: kAudioChannelLabel_Unknown, count: 6)
         #expect(NvstAudioPlacement.speakers(forChannelLabels: unknown, channelCount: 6)

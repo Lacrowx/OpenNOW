@@ -96,13 +96,17 @@ public struct NvstAudioPlacement: Equatable, Sendable {
     }
 
     /// The speaker of each device channel from the route's Core Audio channel labels. A 5.1
-    /// route's one surround pair is the layout's rear pair; when the route also has a rear pair,
-    /// the plain surround pair is the side pair. Labels that do not at least name a front pair
-    /// are not trusted.
+    /// route's one surround pair is the layout's rear pair, whether it is labelled plain or
+    /// "direct"; when the route also has a rear pair, the plain surround pair is the side pair,
+    /// and a direct pair beside another surround pair is the side pair. Labels that do not at
+    /// least name a front pair are not trusted.
     public static func speakers(forChannelLabels labels: [UInt32], channelCount: Int) -> [NvstSpeaker?] {
         guard labels.count == channelCount else { return defaultSpeakers(channelCount: channelCount) }
         let hasRearPair = labels.contains(kAudioChannelLabel_RearSurroundLeft)
             || labels.contains(kAudioChannelLabel_RearSurroundRight)
+        let hasPlainSurroundPair = labels.contains(kAudioChannelLabel_LeftSurround)
+            || labels.contains(kAudioChannelLabel_RightSurround)
+        let directIsRear = !hasRearPair && !hasPlainSurroundPair
         let speakers: [NvstSpeaker?] = labels.map { label in
             switch label {
             case kAudioChannelLabel_Left: .frontLeft
@@ -113,8 +117,8 @@ public struct NvstAudioPlacement: Equatable, Sendable {
             case kAudioChannelLabel_RightSurround: hasRearPair ? .sideRight : .backRight
             case kAudioChannelLabel_RearSurroundLeft: .backLeft
             case kAudioChannelLabel_RearSurroundRight: .backRight
-            case kAudioChannelLabel_LeftSurroundDirect: .sideLeft
-            case kAudioChannelLabel_RightSurroundDirect: .sideRight
+            case kAudioChannelLabel_LeftSurroundDirect: directIsRear ? .backLeft : .sideLeft
+            case kAudioChannelLabel_RightSurroundDirect: directIsRear ? .backRight : .sideRight
             default: nil
             }
         }
