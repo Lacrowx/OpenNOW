@@ -223,8 +223,9 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
         renderer.onFormatChange = { [weak self] format in
             Task { @MainActor in self?.videoFormatChanged(format, fps: fps) }
         }
-        let audioChannels = StreamSettingsResolver.audioChannelCount(for: settings)
-        tvStreamDebug("[TVStream] audio output carries \(TVAudioOutput.channels) channels, asking the seat for \(audioChannels)")
+        let audioChannels = StreamSettingsResolver.audioChannelCount(for: session, settings: settings)
+        tvStreamDebug("[TVStream] audio output carries \(TVAudioOutput.channels) channels, asking the seat for \(audioChannels)"
+            + (session.requestedAudioChannelCount == nil ? " (resolved now)" : " (as the session was requested)"))
         let transport = NativeStreamNVST(allocation: session, settings: settings, profile: profile, codec: codec,
             displayFPS: max(profile.fps, UIScreen.main.maximumFramesPerSecond),
             audioChannelCount: audioChannels,

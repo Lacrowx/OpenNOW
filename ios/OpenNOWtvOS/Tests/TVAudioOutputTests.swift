@@ -56,4 +56,41 @@ final class TVAudioOutputTests: XCTestCase {
     func testThisDeviceCanDecodeSurround() {
         XCTAssertTrue(TVAudioOutput.canDecodeSurround)
     }
+
+    private func session(requestedAudioChannelCount: Int?) -> ActiveSession {
+        let game = CloudGame(id: "test", title: "A Game", genre: "Cloud Game",
+            platform: "STEAM", icon: "gamecontroller.fill", imageUrl: nil, launchAppId: "12345",
+            launchOptions: [], uuid: nil,
+            summary: nil, longDescription: nil, publisher: nil, developer: nil, releaseDate: nil,
+            featureLabels: nil, tags: nil, stores: nil, playType: nil, membershipTierLabel: nil,
+            catalogSectionId: nil, catalogSectionTitle: nil, contentRatings: nil)
+        var session = ActiveSession(id: "session", game: game, startedAt: .now, status: 2,
+            queuePosition: nil, seatSetupStep: nil, serverIp: nil, mediaIp: nil, mediaPort: 0,
+            signalingServer: nil, signalingUrl: nil, iceServers: [], zone: "", streamingBaseUrl: "",
+            clientId: "client", deviceId: "device", adState: nil)
+        session.requestedAudioChannelCount = requestedAudioChannelCount
+        return session
+    }
+
+    /// The stream asks for what the session was requested with, whatever the setting or the
+    /// output says now; only a session without a recorded count resolves it again.
+    func testTheStreamUsesTheCountTheSessionWasRequestedWith() {
+        var stereo = AppSettings.default
+        stereo.audioChannelLimit = StreamAudioChannelLimit.stereo.rawValue
+        XCTAssertEqual(StreamSettingsResolver.audioChannelCount(for: session(requestedAudioChannelCount: 6),
+                                                                settings: stereo), 6)
+        XCTAssertEqual(StreamSettingsResolver.audioChannelCount(for: session(requestedAudioChannelCount: 2),
+                                                                settings: .default), 2)
+        XCTAssertEqual(StreamSettingsResolver.audioChannelCount(for: session(requestedAudioChannelCount: nil),
+                                                                settings: stereo), 2)
+    }
+
+    func testTheRequestedCountIsSavedAndASessionSavedBeforeItLoads() throws {
+        let encoded = try JSONEncoder().encode(session(requestedAudioChannelCount: 8))
+        XCTAssertEqual(try JSONDecoder().decode(ActiveSession.self, from: encoded).requestedAudioChannelCount, 8)
+        var object = try XCTUnwrap(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
+        object.removeValue(forKey: "requestedAudioChannelCount")
+        let older = try JSONDecoder().decode(ActiveSession.self, from: JSONSerialization.data(withJSONObject: object))
+        XCTAssertNil(older.requestedAudioChannelCount)
+    }
 }

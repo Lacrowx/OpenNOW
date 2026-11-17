@@ -688,6 +688,10 @@ struct ActiveSession: Identifiable, Codable, Equatable {
     var nativeRtspsEndpoints: [String]? = nil
     var nativeTransportRequired: Bool? = nil
     var allocatedAppId: String? = nil
+    /// The audio channel count the create or claim request asked the seat for, so the stream
+    /// setup asks for the same. `nil` for a session saved before this was recorded, or one this
+    /// client did not request; the stream start then resolves the count again.
+    var requestedAudioChannelCount: Int? = nil
 }
 
 struct RemoteSessionCandidate: Identifiable, Codable, Equatable {
@@ -2438,6 +2442,12 @@ enum StreamSettingsResolver {
         #else
         return 2
         #endif
+    }
+
+    /// The count a stream sets up for: the one its session was requested with, so the request,
+    /// the announce and the pipeline agree; resolved again only for a session without one.
+    static func audioChannelCount(for session: ActiveSession, settings: AppSettings) -> Int {
+        session.requestedAudioChannelCount ?? audioChannelCount(for: settings)
     }
 
     /// The session request's audio fields, as the official client (2.0.90.126) fills them:
@@ -4547,12 +4557,13 @@ actor GFNAPIClient {
             "languageCode": StreamSettingsResolver.normalizedGameLanguage(settings.gameLanguage)
         ])
         let url = URL(string: "\(base)/v2/session?\(sessionQuery)")!
+        let audioChannelCount = StreamSettingsResolver.audioChannelCount(for: settings)
         let body = Self.buildSessionBody(
             appId: launchAppId,
             title: game.title,
             settings: settings,
             profile: streamProfile,
-            audioChannelCount: StreamSettingsResolver.audioChannelCount(for: settings),
+            audioChannelCount: audioChannelCount,
             launcherName: launcherName,
             deviceProfile: deviceProfile,
             deviceHashId: deviceId,
@@ -4637,6 +4648,7 @@ actor GFNAPIClient {
         )
         active.sessionControlBaseUrl = controlBase
         active.allocatedAppId = SessionLifecyclePolicy.allocatedAppID(in: sessionObj, fallback: resolvedLaunchAppId)
+        active.requestedAudioChannelCount = audioChannelCount
         return active
     }
 
@@ -5070,18 +5082,22 @@ actor GFNAPIClient {
             ])
         }
         var claimJSON: [String: Any] = [:]
+        // Only a claim this client sends asks for a channel count.
+        var requestedAudioChannelCount: Int?
         if preClaimStatus != 1 {
             let sessionQuery = URLQueryItemEncoder.encode([
                 "keyboardLayout": StreamSettingsResolver.normalizedKeyboardLayout(settings.keyboardLayout),
                 "languageCode": StreamSettingsResolver.normalizedGameLanguage(settings.gameLanguage)
             ])
             let claimURL = URL(string: "https://\(effectiveServerIp)/v2/session/\(candidate.id)?\(sessionQuery)")!
+            let audioChannelCount = StreamSettingsResolver.audioChannelCount(for: settings)
+            requestedAudioChannelCount = audioChannelCount
             let claimBody = Self.buildClaimBody(
                 sessionId: candidate.id,
                 appId: allocatedAppID,
                 settings: settings,
                 profile: streamProfile,
-                audioChannelCount: StreamSettingsResolver.audioChannelCount(for: settings),
+                audioChannelCount: audioChannelCount,
                 deviceProfile: deviceProfile,
                 deviceHashId: claimDeviceId,
                 streamingBaseURL: zoneBase
@@ -5158,6 +5174,7 @@ actor GFNAPIClient {
             host: claimedControl?["ip"] as? String, port: claimedControl?["port"] as? Int
         )
         active.allocatedAppId = SessionLifecyclePolicy.allocatedAppID(in: resolvedSessionObj, fallback: allocatedAppID)
+        active.requestedAudioChannelCount = requestedAudioChannelCount
 
         for _ in 0..<45 {
             let polled = try await pollSession(session: session, activeSession: active, settings: settings)
