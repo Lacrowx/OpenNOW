@@ -790,6 +790,33 @@ struct AccountConnector: Identifiable, Codable, Equatable {
     }
 }
 
+/// The most audio channels a stream may ask the seat for. Apple TV only.
+enum StreamAudioChannelLimit: String, Codable, CaseIterable, Identifiable {
+    case automatic
+    case stereo
+    case surround51 = "5.1"
+    case surround71 = "7.1"
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .automatic: return "Automatic"
+        case .stereo: return "Stereo"
+        case .surround51: return "5.1"
+        case .surround71: return "7.1"
+        }
+    }
+
+    var maximumChannels: Int {
+        switch self {
+        case .stereo: return 2
+        case .surround51: return 6
+        case .automatic, .surround71: return 8
+        }
+    }
+}
+
 enum StreamColorQuality: String, Codable, CaseIterable, Identifiable {
     case eightBit420 = "8bit_420"
     case eightBit444 = "8bit_444"
@@ -1097,6 +1124,8 @@ struct AppSettings: Codable, Equatable {
     var experimentalDesktop444TouchEnabled: Bool = false
     var preferredColorQuality: String = StreamColorQuality.eightBit420.rawValue
     var hdrEnabled: Bool = false
+    /// A `StreamAudioChannelLimit` raw value.
+    var audioChannelLimit: String = StreamAudioChannelLimit.automatic.rawValue
     var maxBitrateMbps: Int
     var keyboardLayout: String
     var gameLanguage: String
@@ -1218,6 +1247,7 @@ struct AppSettings: Codable, Equatable {
         case experimentalDesktop444TouchEnabled
         case preferredColorQuality
         case hdrEnabled
+        case audioChannelLimit
         case maxBitrateMbps
         case keyboardLayout
         case gameLanguage
@@ -1346,6 +1376,8 @@ struct AppSettings: Codable, Equatable {
         experimentalDesktop444TouchEnabled = try container.decodeIfPresent(Bool.self, forKey: .experimentalDesktop444TouchEnabled) ?? false
         preferredColorQuality = try container.decodeIfPresent(String.self, forKey: .preferredColorQuality) ?? StreamColorQuality.eightBit420.rawValue
         hdrEnabled = try container.decodeIfPresent(Bool.self, forKey: .hdrEnabled) ?? false
+        audioChannelLimit = try container.decodeIfPresent(String.self, forKey: .audioChannelLimit)
+            ?? StreamAudioChannelLimit.automatic.rawValue
         maxBitrateMbps = try container.decodeIfPresent(Int.self, forKey: .maxBitrateMbps) ?? 0
         keyboardLayout = try container.decodeIfPresent(String.self, forKey: .keyboardLayout) ?? "en-US"
         gameLanguage = try container.decodeIfPresent(String.self, forKey: .gameLanguage) ?? "en_US"
@@ -2384,6 +2416,39 @@ enum StreamSettingsResolver {
 
     static func isHDRAvailable(subscription: SubscriptionSnapshot?, fallbackMembershipTier: String?) -> Bool {
         plan(for: subscription?.membershipTier ?? fallbackMembershipTier) >= .ultimate
+    }
+
+    /// How many audio channels to ask the seat for: what the connected output carries, capped by
+    /// the user's limit. A session that captures the microphone stays stereo, and so does every
+    /// platform but tvOS.
+    static func audioChannelCount(limit: String, outputChannels: Int, capturesMicrophone: Bool) -> Int {
+        #if os(tvOS)
+        guard !capturesMicrophone else { return 2 }
+        let carried = outputChannels >= 8 ? 8 : (outputChannels >= 6 ? 6 : 2)
+        return min(carried, (StreamAudioChannelLimit(rawValue: limit) ?? .automatic).maximumChannels)
+        #else
+        return 2
+        #endif
+    }
+
+    static func audioChannelCount(for settings: AppSettings) -> Int {
+        #if os(tvOS)
+        return audioChannelCount(limit: settings.audioChannelLimit, outputChannels: TVAudioOutput.channels,
+                                 capturesMicrophone: settings.keepMicEnabled)
+        #else
+        return 2
+        #endif
+    }
+
+    /// The session request's audio fields, as the official client (2.0.90.126) fills them:
+    /// `requestedAudioFormat` 2 for 5.1 and 3 for 7.1, and the channel count as text in the
+    /// `surroundAudioInfo` metadata entry. Stereo sends no format field, as before.
+    static func audioRequestFields(channelCount: Int) -> (requestedAudioFormat: Int?, surroundAudioInfo: String) {
+        switch channelCount {
+        case 8: return (3, "8")
+        case 6: return (2, "6")
+        default: return (nil, "2")
+        }
     }
 
     static func colorQuality(for settings: AppSettings) -> StreamColorQuality {
@@ -4487,6 +4552,7 @@ actor GFNAPIClient {
             title: game.title,
             settings: settings,
             profile: streamProfile,
+            audioChannelCount: StreamSettingsResolver.audioChannelCount(for: settings),
             launcherName: launcherName,
             deviceProfile: deviceProfile,
             deviceHashId: deviceId,
@@ -5015,6 +5081,7 @@ actor GFNAPIClient {
                 appId: allocatedAppID,
                 settings: settings,
                 profile: streamProfile,
+                audioChannelCount: StreamSettingsResolver.audioChannelCount(for: settings),
                 deviceProfile: deviceProfile,
                 deviceHashId: claimDeviceId,
                 streamingBaseURL: zoneBase
@@ -6266,12 +6333,14 @@ actor GFNAPIClient {
         title: String,
         settings: AppSettings,
         profile: StreamVideoProfile,
+        audioChannelCount: Int,
         launcherName: String,
         deviceProfile: StreamDeviceProfile,
         deviceHashId: String,
         accountLinked: Bool,
         streamingBaseURL: String
     ) -> Data {
+        let audio = StreamSettingsResolver.audioRequestFields(channelCount: audioChannelCount)
         let hdrEnabled = settings.hdrEnabled
         let colorQuality = StreamSettingsResolver.colorQuality(for: settings)
         let bitDepth = hdrEnabled || colorQuality.bitDepth == 10 ? 10 : 0
@@ -6287,9 +6356,9 @@ actor GFNAPIClient {
             ["key": "preferredLauncher", "value": launcherName],
             ["key": "clientPhysicalResolution", "value": "{\"horizontalPixels\":\(profile.width),\"verticalPixels\":\(profile.height)}"],
             ["key": GFNConstants.streamSettingsMetadataKey, "value": StreamSettingsResolver.sessionSignature(for: settings, profile: profile)],
-            ["key": "surroundAudioInfo", "value": "2"]
+            ["key": "surroundAudioInfo", "value": audio.surroundAudioInfo]
         ]
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "sessionRequestData": [
                 "appId": appId,
                 "internalTitle": title,
@@ -6338,6 +6407,10 @@ actor GFNAPIClient {
                 )
             ]
         ]
+        if let format = audio.requestedAudioFormat, var requestData = body["sessionRequestData"] as? [String: Any] {
+            requestData["requestedAudioFormat"] = format
+            body["sessionRequestData"] = requestData
+        }
         return (try? JSONSerialization.data(withJSONObject: NativeStreamNVSTConfiguration.requestBody(body,
             enabled: settings.experimentalNativeNVSTEnabled, streamingBaseURL: streamingBaseURL))) ?? Data()
     }
@@ -6347,10 +6420,12 @@ actor GFNAPIClient {
         appId: String,
         settings: AppSettings,
         profile: StreamVideoProfile,
+        audioChannelCount: Int,
         deviceProfile: StreamDeviceProfile,
         deviceHashId: String,
         streamingBaseURL: String
     ) -> Data {
+        let audio = StreamSettingsResolver.audioRequestFields(channelCount: audioChannelCount)
         let hdrEnabled = settings.hdrEnabled
         let colorQuality = StreamSettingsResolver.colorQuality(for: settings)
         let bitDepth = hdrEnabled || colorQuality.bitDepth == 10 ? 10 : 0
@@ -6365,9 +6440,9 @@ actor GFNAPIClient {
             ["key": "ClientImeSupport", "value": "0"],
             ["key": "clientPhysicalResolution", "value": "{\"horizontalPixels\":\(profile.width),\"verticalPixels\":\(profile.height)}"],
             ["key": GFNConstants.streamSettingsMetadataKey, "value": StreamSettingsResolver.sessionSignature(for: settings, profile: profile)],
-            ["key": "surroundAudioInfo", "value": "2"]
+            ["key": "surroundAudioInfo", "value": audio.surroundAudioInfo]
         ]
-        let body: [String: Any] = [
+        var body: [String: Any] = [
             "action": 2,
             "data": "RESUME",
             "sessionRequestData": [
@@ -6419,6 +6494,10 @@ actor GFNAPIClient {
             ],
             "metaData": []
         ]
+        if let format = audio.requestedAudioFormat, var requestData = body["sessionRequestData"] as? [String: Any] {
+            requestData["requestedAudioFormat"] = format
+            body["sessionRequestData"] = requestData
+        }
         return (try? JSONSerialization.data(withJSONObject: NativeStreamNVSTConfiguration.requestBody(body,
             enabled: settings.experimentalNativeNVSTEnabled, streamingBaseURL: streamingBaseURL))) ?? Data()
     }
