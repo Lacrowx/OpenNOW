@@ -837,15 +837,6 @@ struct SettingsView: View {
             Text("Selecting 8-bit turns HDR off. Color and HDR changes apply to a new session; resuming keeps the host's existing format.")
                 .font(.footnote).foregroundStyle(.secondary)
 
-            #if os(tvOS)
-            Picker("Sound", selection: $store.settings.audioChannelLimit) {
-                ForEach(StreamAudioChannelLimit.allCases) { Text($0.label).tag($0.rawValue) }
-            }
-
-            Text("Automatic asks for as many speakers as your TV or receiver reports. Applies to a new session.")
-                .font(.footnote).foregroundStyle(.secondary)
-            #endif
-
             if store.settings.experimentalNativeNVSTEnabled || store.settings.preferredColorQuality == StreamColorQuality.tenBit444.rawValue {
                 Text("4:4:4 uses H.265 and the native receiver. Enable HDR separately. The host and device must support 10-bit 4:4:4; unsupported or downgraded streams report an error. The Color status shows the received output.")
                     .font(.footnote)
@@ -857,6 +848,15 @@ struct SettingsView: View {
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }
+
+            #if os(tvOS)
+            Picker("Sound", selection: $store.settings.audioChannelLimit) {
+                ForEach(StreamAudioChannelLimit.allCases) { Text($0.label).tag($0.rawValue) }
+            }
+
+            Text("Automatic asks for as many speakers as your TV or receiver reports. Applies to a new session.")
+                .font(.footnote).foregroundStyle(.secondary)
+            #endif
 
             if streamVideoEffectsAvailable {
                 Toggle("Metal 4 Rendering", isOn: $store.settings.metal4Enabled)
