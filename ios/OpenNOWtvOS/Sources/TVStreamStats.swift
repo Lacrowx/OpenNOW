@@ -69,9 +69,46 @@ extension TVStreamStats.Reading {
 }
 
 extension StreamStatsMetrics {
+    /// The TV's strip: every figure that changes during a stream. Codec, GPU and server stay the
+    /// same for the whole session and are in the stream menu, so they start off.
+    static var tvDefault: StreamStatsMetrics {
+        var metrics = StreamStatsMetrics()
+        metrics.fps = true
+        metrics.ping = true
+        metrics.latency = true
+        metrics.bitrate = true
+        metrics.packetLoss = true
+        metrics.resolution = true
+        metrics.battery = false
+        metrics.connection = false
+        return metrics
+    }
+
     /// How many of the enabled metrics a TV can show. Battery, network type, the display's own
     /// refresh rate and the renderer status belong to the iOS stream screen.
     var tvEnabledCount: Int {
         [fps, ping, latency, bitrate, packetLoss, resolution, codec, gpu, location].filter { $0 }.count
+    }
+}
+
+extension ProcessInfo.ThermalState {
+    /// The Apple TV's own temperature, as the stream menu words it.
+    var tvLabel: String {
+        switch self {
+        case .nominal: "Normal"
+        case .fair: "Warm"
+        case .serious: "Hot"
+        case .critical: "Too hot"
+        @unknown default: "Unknown"
+        }
+    }
+
+    /// Shown over the game only from "serious", where tvOS starts slowing the device down and
+    /// frames can drop; below that it says nothing worth the space.
+    var tvHUDText: String? {
+        switch self {
+        case .nominal, .fair: nil
+        default: "Apple TV \(tvLabel.lowercased())"
+        }
     }
 }

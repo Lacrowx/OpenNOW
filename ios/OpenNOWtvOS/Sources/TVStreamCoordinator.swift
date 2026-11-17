@@ -45,6 +45,12 @@ final class TVFrameRenderer: @unchecked Sendable {
     }
 }
 
+/// One measurement of the running stream as the stream menu shows it.
+struct TVStreamFigure: Hashable {
+    let label: String
+    let value: String
+}
+
 enum TVStreamMenuItem: String {
     case resume = "Resume"
     case showStats = "Show Stats"
@@ -66,7 +72,8 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
     @Published private(set) var detail = ""
     @Published private(set) var failed = false
     @Published private(set) var videoActive = false
-    @Published private(set) var stats = ""
+    /// What the stream menu shows of the running stream, in display order.
+    @Published private(set) var figures: [TVStreamFigure] = []
     /// The figures of the stats HUD, in display order; empty until the first measurement.
     @Published private(set) var hudItems: [String] = []
     @Published private(set) var statsVisible: Bool
@@ -329,11 +336,20 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
         let now = ProcessInfo.processInfo.systemUptime
         let reading = statsReader.read(sample, at: now)
         let ping = reading.pingMs.map { "\($0) ms" } ?? "–"
+        let thermal = ProcessInfo.processInfo.thermalState
         hudItems = reading.hudItems(metrics: settings.streamStatsMetrics, codec: codecLabel,
             gpu: Self.reported(session.gpuType), server: Self.reported(session.zone))
-        stats = ([sample.resolution ?? "pending", reading.decodedFPS.map { "\($0) fps" }, reading.bitrateText,
-                  sample.bitstream, sample.pixelFormat, reading.decodeMs.map { String(format: "decode %.1f ms", $0) },
-                  "ping \(ping)", "lost \(sample.lost)"] as [String?]).compactMap { $0 }.joined(separator: " · ")
+            + [thermal.tvHUDText].compactMap { $0 }
+        figures = [
+            TVStreamFigure(label: "Video", value: sample.resolution ?? "pending"),
+            TVStreamFigure(label: "Frame rate", value: reading.decodedFPS.map { "\($0) fps" } ?? "–"),
+            TVStreamFigure(label: "Bitrate", value: reading.bitrateText ?? "–"),
+            TVStreamFigure(label: "Ping", value: ping),
+            TVStreamFigure(label: "Decode", value: reading.decodeMs.map { String(format: "%.1f ms", $0) } ?? "–"),
+            TVStreamFigure(label: "Packets lost", value: "\(sample.lost)"),
+            TVStreamFigure(label: "Format", value: sample.bitstream),
+            TVStreamFigure(label: "Thermal", value: thermal.tvLabel),
+        ]
         onRuntimeSample(StreamRuntimeSample(timestamp: now, pingMs: reading.pingMs, bitrateKbps: reading.bitrateKbps,
             jitterMs: reading.jitterMs, fps: reading.decodedFPS, receivedFps: reading.receivedFPS,
             decodedFps: reading.decodedFPS, decodeMs: reading.decodeMs, packetsLostDelta: reading.packetsLostDelta,
@@ -497,6 +513,32 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
         }
     }
 }
+
+#if DEBUG
+extension TVStreamCoordinator {
+    /// `--opennow-stream-menu-preview`: the menu (or the failed panel) open over a stream that is
+    /// never started, with sample figures.
+    func installMenuPreview(failed: Bool) {
+        if failed {
+            fail("The connection to the server was lost.")
+            return
+        }
+        videoActive = true
+        hudItems = ["119 fps", "24 ms", "48.6 Mbps", "loss 0.1%", "3840x2160"]
+        figures = [
+            TVStreamFigure(label: "Video", value: "3840x2160"),
+            TVStreamFigure(label: "Frame rate", value: "119 fps"),
+            TVStreamFigure(label: "Bitrate", value: "48.6 Mbps"),
+            TVStreamFigure(label: "Ping", value: "24 ms"),
+            TVStreamFigure(label: "Decode", value: "5.8 ms"),
+            TVStreamFigure(label: "Packets lost", value: "12"),
+            TVStreamFigure(label: "Format", value: "10-bit 4:2:0"),
+            TVStreamFigure(label: "Thermal", value: ProcessInfo.processInfo.thermalState.tvLabel),
+        ]
+        setMenuVisible(true)
+    }
+}
+#endif
 
 extension TVStreamCoordinator: NativeStreamInputSink {
     nonisolated func sendReliableInput(_ data: Data) { forward(data) }

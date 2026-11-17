@@ -284,7 +284,7 @@ struct TVConsoleQueueView: View {
         } else if let position = stage.queuePosition {
             queueRing(position)
         } else if let session, stage.step != .waitingForRig {
-            rigCard(session)
+            TVConsoleRigCard(session: session)
         }
     }
 
@@ -315,10 +315,14 @@ struct TVConsoleQueueView: View {
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("Queue position \(position)")
     }
+}
 
-    /// Only what the session reports; a row without data is left out, never estimated.
-    @ViewBuilder
-    private func rigCard(_ session: ActiveSession) -> some View {
+/// The rig a session runs on, beside the launch rail of the queue and the stream's Connecting
+/// screen. Only what the session reports; a row without data is left out, never estimated.
+struct TVConsoleRigCard: View {
+    let session: ActiveSession
+
+    var body: some View {
         let rows = [("GPU", session.gpuType ?? ""), ("Zone", session.zone)].filter { !$0.1.isEmpty }
         if !rows.isEmpty {
             VStack(alignment: .leading, spacing: 18) {

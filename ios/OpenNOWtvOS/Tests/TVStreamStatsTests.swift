@@ -91,4 +91,32 @@ final class TVStreamStatsTests: XCTestCase {
         metrics.renderer = true
         XCTAssertEqual(metrics.tvEnabledCount, 1)
     }
+
+    func testTVDefaultShowsEveryLiveFigureAndNoFixedOnes() {
+        let metrics = StreamStatsMetrics.tvDefault
+        XCTAssertEqual(metrics.tvEnabledCount, 6)
+        XCTAssertTrue(metrics.fps && metrics.ping && metrics.latency && metrics.bitrate
+                      && metrics.packetLoss && metrics.resolution)
+        XCTAssertFalse(metrics.codec || metrics.gpu || metrics.location)
+    }
+
+    func testSavedSettingsTakeTheTVDefaultOnceThenKeepTheUsersChoice() {
+        var settings = AppSettings.default
+        settings.tvStatsMetricsDefaultVersion = 0
+        settings.streamStatsMetrics = StreamStatsMetrics()
+        settings.normalizeStreamDefaults()
+        XCTAssertEqual(settings.streamStatsMetrics, .tvDefault)
+
+        settings.streamStatsMetrics.bitrate = false
+        settings.normalizeStreamDefaults()
+        XCTAssertFalse(settings.streamStatsMetrics.bitrate)
+    }
+
+    func testThermalStateReachesTheStripOnlyWhenTheTVThrottles() {
+        XCTAssertNil(ProcessInfo.ThermalState.nominal.tvHUDText)
+        XCTAssertNil(ProcessInfo.ThermalState.fair.tvHUDText)
+        XCTAssertEqual(ProcessInfo.ThermalState.serious.tvHUDText, "Apple TV hot")
+        XCTAssertEqual(ProcessInfo.ThermalState.critical.tvHUDText, "Apple TV too hot")
+        XCTAssertEqual(ProcessInfo.ThermalState.fair.tvLabel, "Warm")
+    }
 }

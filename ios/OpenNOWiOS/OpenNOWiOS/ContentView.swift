@@ -46,7 +46,17 @@ struct ContentView: View {
                         if let queuePosition = debugQueuePreviewPosition {
                             store.installDebugQueuePreview(position: queuePosition)
                         }
+                        if ProcessInfo.processInfo.arguments.contains("--opennow-report-preview") {
+                            store.installDebugSessionReportPreview()
+                        }
                     }
+            } else if let state = ProcessInfo.processInfo.arguments
+                .first(where: { $0.hasPrefix("--opennow-stream-menu-preview") }) {
+                #if os(tvOS)
+                TVStreamerView.menuPreview(state: String(state.split(separator: "=").last ?? ""))
+                #else
+                standardContent
+                #endif
             } else if ProcessInfo.processInfo.arguments.contains("--opennow-server-picker-preview") {
                 PrintedWasteQueueView(game: OpenNOWStore.debugStorePreviewGames[0]) { _ in }
             } else if ProcessInfo.processInfo.arguments.contains("--opennow-details-preview") {
@@ -719,6 +729,33 @@ struct MainTabView: View {
         .modifier(LaunchConflictPrompt())
         // The report is presented over the tab surface rather than the streamer, so it survives
         // the streamer being torn down and never competes with the video layer for the screen.
+        #if os(tvOS)
+        // A console page over the shell; Back closes it as Done does.
+        .fullScreenCover(item: Binding(
+            get: { store.sessionReport },
+            set: { if $0 == nil { store.dismissSessionReport() } }
+        ), onDismiss: {
+            sessionReportPresented = false
+            if let deck = pendingBugReportDeck {
+                pendingBugReportDeck = nil
+                bugReportDeck = deck
+            }
+        }) { report in
+            TVConsoleSessionReportView(
+                report: report,
+                onReportProblem: {
+                    // Captured before the report closes, while the session is still known.
+                    pendingBugReportDeck = store.bugReportPreflightDeck()
+                    store.dismissSessionReport()
+                },
+                onDismiss: { disableFutureReports in
+                    store.dismissSessionReport(disableFutureReports: disableFutureReports)
+                }
+            )
+            .environmentObject(store)
+            .onAppear { sessionReportPresented = true }
+        }
+        #else
         .sheet(item: Binding(
             get: { store.sessionReport },
             set: { if $0 == nil { store.dismissSessionReport() } }
@@ -746,6 +783,7 @@ struct MainTabView: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         }
+        #endif
         .sheet(item: $bugReportDeck, onDismiss: { bugReportPresented = false }) { deck in
             BugReportView(deck: deck) { draft in
                 await store.submitBugReport(draft, deck: deck)

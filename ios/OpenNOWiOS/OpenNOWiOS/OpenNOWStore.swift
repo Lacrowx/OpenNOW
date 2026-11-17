@@ -1081,6 +1081,8 @@ struct LaunchConflict: Identifiable, Equatable {
 }
 
 private let appSettingsSessionReportDefaultVersion = 1
+/// Bumped when the Apple TV's default stats strip figures change; applied once over saved settings.
+private let appSettingsTVStatsMetricsDefaultVersion = 1
 
 struct AppSettings: Codable, Equatable {
     var preferredRegion: String
@@ -1175,6 +1177,7 @@ struct AppSettings: Codable, Equatable {
     // Sessions
     var showSessionReportAfterStream: Bool = false
     var sessionReportDefaultVersion: Int = 0
+    var tvStatsMetricsDefaultVersion: Int = 0
     var sessionClockShowEveryMinutes: Int = 60
     var sessionClockShowDurationSeconds: Int = 30
 
@@ -1270,6 +1273,7 @@ struct AppSettings: Codable, Equatable {
         case showAntiAfkIndicator
         case showSessionReportAfterStream
         case sessionReportDefaultVersion
+        case tvStatsMetricsDefaultVersion
         case sessionClockShowEveryMinutes
         case sessionClockShowDurationSeconds
         case microphoneMode
@@ -1402,6 +1406,7 @@ struct AppSettings: Codable, Equatable {
         showAntiAfkIndicator = try container.decodeIfPresent(Bool.self, forKey: .showAntiAfkIndicator) ?? false
         showSessionReportAfterStream = try container.decodeIfPresent(Bool.self, forKey: .showSessionReportAfterStream) ?? false
         sessionReportDefaultVersion = try container.decodeIfPresent(Int.self, forKey: .sessionReportDefaultVersion) ?? 0
+        tvStatsMetricsDefaultVersion = try container.decodeIfPresent(Int.self, forKey: .tvStatsMetricsDefaultVersion) ?? 0
         sessionClockShowEveryMinutes = try container.decodeIfPresent(Int.self, forKey: .sessionClockShowEveryMinutes) ?? 60
         sessionClockShowDurationSeconds = try container.decodeIfPresent(Int.self, forKey: .sessionClockShowDurationSeconds) ?? 30
         // `keepMicEnabled` predates the three-state mode. Carry a true value forward as
@@ -1491,6 +1496,13 @@ struct AppSettings: Codable, Equatable {
             showSessionReportAfterStream = false
         }
         sessionReportDefaultVersion = appSettingsSessionReportDefaultVersion
+        #if os(tvOS)
+        // The shared defaults name figures a TV cannot measure; it shows every live one instead.
+        if tvStatsMetricsDefaultVersion < appSettingsTVStatsMetricsDefaultVersion {
+            streamStatsMetrics = .tvDefault
+        }
+        tvStatsMetricsDefaultVersion = appSettingsTVStatsMetricsDefaultVersion
+        #endif
         if !StreamSettingsResolver.aspectRatioOptions.contains(preferredAspectRatio) {
             preferredAspectRatio = "16:9"
         }
@@ -7176,6 +7188,32 @@ final class OpenNOWStore: ObservableObject {
             report(NSError(domain: "debug", code: sample == "expired" ? 401 : 503), context: .launch)
         }
         #endif
+    }
+
+    /// `--opennow-report-preview`: the report shown after a stream, with sample measurements.
+    func installDebugSessionReportPreview() {
+        let trend = (0..<48).map { index in
+            SessionReportTrendPoint(offsetSeconds: index * 100,
+                                    pingMs: 22 + (index % 7) * 2 + (index == 31 ? 38 : 0))
+        }
+        sessionReport = SessionReport(
+            gameTitle: Self.debugStorePreviewGames[0].title, score: 78, rating: .good,
+            durationSeconds: 4_812, sampleCount: 4_812, limitedData: false,
+            averagePingMs: 27, peakPingMs: 64, averageBitrateKbps: 41_800, peakBitrateKbps: 74_100,
+            packetLossPercent: 0.6, peakPacketLossPercent: 2.4, averageJitterMs: 3.2,
+            averageFps: 113.6, lowestFps: 84, targetFps: 120, averageDecodeMs: 6.1, peakDecodeMs: 11.8,
+            requestedResolution: "3840x2160", deliveredResolution: "2560x1440",
+            requestedCodec: "H265", deliveredCodec: "H265", networkKind: .wired, trend: trend,
+            downgrades: [SessionReportFinding(
+                title: "Delivered a different resolution",
+                detail: "The stream arrived at 2560x1440 instead of the requested 3840x2160. That reflects what the cloud server or the game chose at runtime — your saved setting has not changed.",
+                kind: .warning)],
+            recommendations: [
+                SessionReportFinding(title: "Steady the latency",
+                    detail: "Pick the closest server, turn off any VPN, and pause background downloads. Consistent latency matters more than raw download speed."),
+                SessionReportFinding(title: "Reduce packet loss",
+                    detail: "Loss averaged 0.6%. Above 1% you get blur, stutter and recovery events. Pause other uploads, move closer to the router, or use a wired adapter."),
+            ])
     }
     #endif
 
