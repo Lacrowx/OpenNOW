@@ -118,7 +118,7 @@ That's it. OpenNOW is now on your Apple TV's Home screen.
 
 ## Play at 120 Hz
 
-The Apple TV can send 120 Hz to the TV only below 4K: at **1440p** or **1080p**. OpenNOW switches the TV to that mode by itself when a 120 fps stream starts, and back when you leave.
+The Apple TV can send 120 Hz to the TV only below 4K: at **1440p** or **1080p**. OpenNOW switches the TV to that mode for you.
 
 You need:
 
@@ -130,17 +130,17 @@ Then, in OpenNOW:
 1. Open **Settings → Stream**.
 2. Set **Resolution** to **2560 x 1440** (or **1920 x 1080**).
 3. Set **Frame Rate** to **120 fps**.
-4. Leave **Display Mode** (under **Video**) on **Automatic**.
+4. Under **Video**, set **Display Mode** to either:
+   - **Automatic**: the TV switches to 120 Hz when a 120 fps stream starts and keeps its own mode in the menus, or
+   - a mode ending in **120 Hz** (for example 2560 × 1440 · 120 Hz): the TV stays at 120 Hz for the whole app, menus included. If the TV shows a black screen, wait 15 seconds and the old mode comes back.
 
 Start a game. The TV's own info screen should now show 120 Hz. HDR works at 120 Hz too.
 
 Good to know:
 
 - **4K at 120 fps does not work.** The Apple TV has no 4K 120 Hz mode, so the TV stays at 60 Hz, and in testing a 4K 120 fps stream also decoded too slowly and skipped frames. Use 1440p.
-- **Keep 120 Hz in the menus too:** pick a mode ending in **120 Hz** under **Display Mode** instead of Automatic. If the TV shows a black screen, wait 15 seconds and the old mode comes back.
 - **When you leave the app:** **When You Leave the App** (next to Display Mode) decides whether the TV goes back to its own mode at once, after a short break (the default), or stays at the app's mode.
 - Use a wired network if you can. 120 fps sends twice as many frames, so Wi-Fi hiccups show up more.
-
 
 ## Problems and ideas
 
