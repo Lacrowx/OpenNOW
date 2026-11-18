@@ -63,6 +63,12 @@ enum TVDisplayMode {
     private static let setCurrentMode = NSSelectorFromString("setCurrentMode:")
     /// Slower modes are of no use to a game stream and are not offered.
     private static let minimumRefreshRate = 60
+    /// While the TV reconnects, the display lists no modes; it is asked again this often, up to
+    /// `reconnectRetryLimit` times (10 s).
+    private static let reconnectRetryInterval = 0.25
+    static let reconnectRetryLimit = 40
+    private static var reconnectAttempts = 0
+    private static var reconnectRetryScheduled = false
 
     /// The modes the connected TV offers, largest and fastest first.
     static var choices: [Choice] {
@@ -161,9 +167,30 @@ enum TVDisplayMode {
         update()
     }
 
+    /// Whether a display that lists `modeCount` modes is waited for. The TV reconnects when its
+    /// HDMI description changes, as when Game Master switches: for about a second the display then
+    /// lists no modes and its current mode is 0 x 0 (measured 2026-11-18 on a rejoin, where Game
+    /// Master switched 0.5 s before the first frame). A mode chosen then is chosen from nothing: the
+    /// fixed one is missing, the TV was handed back to its own mode, and nothing asked again once
+    /// the 274 modes returned.
+    nonisolated static func waitsForDisplay(modeCount: Int?, attempts: Int) -> Bool {
+        (modeCount ?? 0) == 0 && attempts < reconnectRetryLimit
+    }
+
     private static func update() {
-        guard foreground, let display = tvOut(), let current = property(display, "currentMode") as? NSObject,
-              let modes = property(display, "availableModes") as? [NSObject] else { return }
+        reconnectAttempts = 0
+        evaluate()
+    }
+
+    private static func evaluate() {
+        guard foreground else { return }
+        let display = tvOut()
+        let listed = display.flatMap { property($0, "availableModes") } as? [NSObject]
+        guard let display, let current = property(display, "currentMode") as? NSObject,
+              let modes = listed, !modes.isEmpty else {
+            waitForDisplay(modeCount: listed?.count)
+            return
+        }
         let system = original ?? current
         guard let mode = wantedMode(among: modes, system: system) else {
             if let original { apply(original) }
@@ -177,6 +204,21 @@ enum TVDisplayMode {
         if !same(applied, mode) {
             applied = mode
             apply(mode)
+        }
+    }
+
+    /// Looks at the display again shortly while it lists no modes; a later `update` starts the
+    /// count again.
+    private static func waitForDisplay(modeCount: Int?) {
+        guard !reconnectRetryScheduled, waitsForDisplay(modeCount: modeCount, attempts: reconnectAttempts) else { return }
+        if reconnectAttempts == 0 { tvStreamDebug("[TVStream] display lists no modes; waiting for it") }
+        reconnectAttempts += 1
+        reconnectRetryScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + reconnectRetryInterval) {
+            MainActor.assumeIsolated {
+                reconnectRetryScheduled = false
+                evaluate()
+            }
         }
     }
 
