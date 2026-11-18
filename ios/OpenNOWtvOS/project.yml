@@ -73,6 +73,9 @@ targets:
           - IBMPlexMono-Medium.ttf
           - IBMPlexMono-Bold.ttf
         LSApplicationCategoryType: public.app-category.games
+        # Experimental TV Game Master: finds a TCL TV's Android wireless debugging service.
+        NSLocalNetworkUsageDescription: OpenNOW connects to your TV on the local network to switch its game mode while you stream.
+        NSBonjourServices: [_adb-tls-connect._tcp]
         UILaunchScreen: {}
         UIRequiredDeviceCapabilities: [arm64]
         OpenNOWAppGroup: group.$(OPENNOW_TVOS_BUNDLE_ID)

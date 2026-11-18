@@ -543,6 +543,9 @@ struct SettingsView: View {
             interfaceSoundSessionSection
         case .experimental:
             experimentalSection
+            #if os(tvOS)
+            TVGameMasterSetting()
+            #endif
         case .diagnostics:
             #if !os(tvOS)
             reportProblemSection

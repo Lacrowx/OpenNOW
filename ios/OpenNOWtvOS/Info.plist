@@ -40,6 +40,12 @@
 	<false/>
 	<key>LSApplicationCategoryType</key>
 	<string>public.app-category.games</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_adb-tls-connect._tcp</string>
+	</array>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>OpenNOW connects to your TV on the local network to switch its game mode while you stream.</string>
 	<key>OpenNOWAppGroup</key>
 	<string>group.$(OPENNOW_TVOS_BUNDLE_ID)</string>
 	<key>UIAppFonts</key>

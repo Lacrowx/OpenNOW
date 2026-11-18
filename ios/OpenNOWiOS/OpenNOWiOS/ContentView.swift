@@ -649,6 +649,12 @@ struct MainTabView: View {
                 presentedStreamerSession = nil
             }
         }
+        #if os(tvOS)
+        // From pressing Play until the launch ends, so the TV's HDMI re-plug is over before the stream starts.
+        .onChangeCompat(of: store.showStreamLoading) { loading in
+            if loading { TVGameMaster.hold(.launch) } else { TVGameMaster.release(.launch) }
+        }
+        #endif
         .onChangeCompat(of: store.activeSession?.id) { newId in
             streamerAutoRetryCount = 0
             if newId == nil {

@@ -14,6 +14,7 @@ final class OpenNOWAppDelegate: NSObject, UIApplicationDelegate {
         OpenNOWImageCache.configureURLCache()
         #if os(tvOS)
         TVDisplayMode.start()
+        TVGameMaster.start()
         #if DEBUG
         TVAudioSelfTest.runIfRequested()
         #endif

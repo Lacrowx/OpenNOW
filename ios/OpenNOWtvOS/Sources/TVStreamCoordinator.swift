@@ -227,6 +227,7 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
         guard !started else { return }
         started = true
         inputBridge.attach()
+        TVGameMaster.hold(.stream)
         UIApplication.shared.isIdleTimerDisabled = true
         networkMonitor.start { [weak self] kind in self?.networkChanged(kind) }
         audioRouteObserver = NotificationCenter.default.addObserver(
@@ -342,6 +343,7 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
         stopped = true
         displayCriteria = nil
         TVDisplayMode.streamEnded()
+        TVGameMaster.release(.stream)
         startTask?.cancel(); startTask = nil
         menuPoll?.invalidate(); menuPoll = nil
         if let backgroundObserver { NotificationCenter.default.removeObserver(backgroundObserver) }
