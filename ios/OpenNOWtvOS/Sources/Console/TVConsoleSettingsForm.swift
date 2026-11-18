@@ -60,6 +60,29 @@ struct Form<Content: View>: View {
     }
 }
 
+/// The title of a settings page drawn inline in its section's panel, as the header of an empty
+/// `Section` placed before the page's own sections. It sets its own type, so the section header
+/// style (small capitals) does not apply.
+struct TVConsoleFormPageTitle: View {
+    let title: String
+    let summary: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(TVConsoleTheme.display(26))
+                .foregroundStyle(TVConsoleTheme.label)
+            Text(summary)
+                .font(TVConsoleTheme.display(16, weight: 600))
+                .foregroundStyle(TVConsoleTheme.textMuted)
+        }
+        .textCase(nil)
+        .tracking(0)
+        .padding(.top, 18)
+        .accessibilityAddTraits(.isHeader)
+    }
+}
+
 private struct TVConsoleFormSection: View {
     let section: SectionConfiguration
 

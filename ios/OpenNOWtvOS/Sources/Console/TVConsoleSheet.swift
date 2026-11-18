@@ -205,6 +205,9 @@ struct TVConsoleHomeTileMenu: View {
     let position: Int
     let isWide: Bool
     let canRemove: Bool
+    /// Starts the game on the store it would start on from its details; `nil` when it cannot
+    /// be started from here (running, restricted, or no store to start it on).
+    var play: (store: String, action: () -> Void)?
     let onMove: () -> Void
     let onSize: (_ wide: Bool) -> Void
     let onDetails: () -> Void
@@ -220,7 +223,12 @@ struct TVConsoleHomeTileMenu: View {
     }
 
     private var choices: [TVConsoleChoice] {
-        var choices = [
+        var choices: [TVConsoleChoice] = []
+        if let play {
+            choices.append(TVConsoleChoice(id: "play", label: "Play", detail: "Starts on \(play.store)",
+                                           action: play.action))
+        }
+        choices += [
             TVConsoleChoice(id: "move", label: "Move tile", detail: "Pick it up, then use the D-pad to place it",
                             action: onMove),
             TVConsoleChoice(id: "square", label: "Square tile", detail: isWide ? "" : "Current size",

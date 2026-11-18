@@ -3329,11 +3329,7 @@ struct GameLaunchDetailsSheet: View {
     }
 
     private func displayLastPlayed(_ raw: String) -> String {
-        let parser = ISO8601DateFormatter()
-        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let date = parser.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
-        guard let date else { return raw }
-        return date.formatted(date: .abbreviated, time: .omitted)
+        game.lastPlayedAt?.formatted(date: .abbreviated, time: .omitted) ?? raw
     }
 
     private var summaryText: String? {

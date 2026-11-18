@@ -1,8 +1,9 @@
 import SwiftUI
 
 /// What the Library and Store pages do with the focused game, so both behave the same: Select
-/// opens its details (and launches from there), Y or Play/Pause pins it to Home or takes it off,
-/// and the controller's Options button jumps to the search field.
+/// opens its details (and launches from there), X (Play/Pause) pins it to Home or takes it off,
+/// and Y or the controller's Options button jumps to the search field, as Y does on Home. A page
+/// opens with focus on a game, unless it was opened to search.
 struct TVConsoleCatalogInteraction: ViewModifier {
     let games: [CloudGame]
     let focus: FocusState<TVConsoleCatalogFocus?>.Binding
@@ -12,23 +13,36 @@ struct TVConsoleCatalogInteraction: ViewModifier {
 
     @EnvironmentObject private var store: OpenNOWStore
     @EnvironmentObject private var input: TVConsoleInput
+    @EnvironmentObject private var shell: TVConsoleShellState
     @State private var pendingLaunchRequest: GameLaunchRequest?
+    /// The page has just appeared; see `settleArrivalFocus`.
+    @State private var arriving = true
 
     func body(content: Content) -> some View {
         content
             .onChange(of: focus.wrappedValue) { _, newValue in
                 if let id = newValue?.gameID { currentID = id }
+                settleArrivalFocus()
             }
-            .onChange(of: games.isEmpty) { _, isEmpty in
-                // The games arrive after the first frame, when the search field was the only
-                // thing focus could take. Hand it to the first cover instead of leaving it there.
-                guard !isEmpty, focus.wrappedValue == .search, let first = games.first else { return }
-                focus.wrappedValue = .game(first.id)
+            // The games can arrive after focus has settled on the search field.
+            .onChange(of: games.isEmpty) { settleArrivalFocus() }
+            .task {
+                if shell.focusSearchOnArrival {
+                    // Home's "Search" lands on the search field.
+                    shell.focusSearchOnArrival = false
+                    arriving = false
+                    focus.wrappedValue = .search
+                    return
+                }
+                settleArrivalFocus()
+                // The focus engine places focus some time after the page's first layout, later
+                // still while the app launches.
+                try? await Task.sleep(for: .seconds(3))
+                arriving = false
             }
             .onReceive(input.presses) { press in
                 switch press {
-                case .y: togglePin()
-                case .options: focus.wrappedValue = .search
+                case .y, .options: focus.wrappedValue = .search
                 // X arrives as Play/Pause below; handling it here too would pin and unpin at once.
                 case .x, .previousPage, .nextPage: break
                 }
@@ -38,6 +52,18 @@ struct TVConsoleCatalogInteraction: ViewModifier {
                 pendingLaunchRequest = GameLaunchRequest(game: game, launchOption: option)
             }
             .printedWasteLaunchSheet(pendingLaunchRequest: $pendingLaunchRequest)
+    }
+
+    /// A page that replaced the one holding focus (LB/RB, a launch argument) can get focus on its
+    /// first focusable view, the search field. While the page is arriving, focus found there moves
+    /// to the described game, once there is one. Focus in the dock is left there, and the first
+    /// focus that lands anywhere else ends the arrival.
+    private func settleArrivalFocus() {
+        guard arriving, let focused = focus.wrappedValue else { return }
+        guard focused == .search else { arriving = false; return }
+        guard let id = currentID ?? games.first?.id else { return }
+        arriving = false
+        focus.wrappedValue = .game(id)
     }
 
     private func togglePin() {
@@ -50,7 +76,7 @@ extension TVConsoleHints {
     /// Hints of a catalog page for the game being described.
     static func catalog(describing game: CloudGame?, pinned: Bool) -> TVConsoleHints {
         TVConsoleHints(
-            left: [.init(button: .options, label: "Search")],
+            left: [.init(button: .y, label: "Search")],
             right: game == nil ? [] : [
                 .init(button: .x, label: pinned ? "Remove from Home" : "Pin to Home"),
                 .init(button: .select, label: "Details"),
@@ -62,7 +88,7 @@ extension TVConsoleHints {
 extension CloudGame {
     /// "Publisher · Genre", leaving out what the catalog does not give.
     var consoleByline: String {
-        [publisher ?? developer ?? "", genre == "Cloud Game" ? "" : genre]
+        (consoleMakers + [genre == "Cloud Game" ? "" : genre])
             .filter { !$0.isEmpty }
             .joined(separator: " · ")
     }

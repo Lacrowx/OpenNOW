@@ -149,6 +149,7 @@ struct SettingsView: View {
     #if os(tvOS)
     @State private var tvSection = SettingsCategory.general
     @State private var tvPath = NavigationPath()
+    @ObservedObject private var releaseChecker = TVReleaseChecker.shared
     #endif
     @State private var connectorPendingDisconnect: AccountConnector?
     #if os(iOS)
@@ -360,7 +361,8 @@ struct SettingsView: View {
                 TVConsoleSettingsSection(
                     id: category, title: category.title, symbol: category.symbolName,
                     color: tvConsoleColor(category),
-                    ink: category == .advanced ? TVConsoleTheme.label : TVConsoleTheme.faceText
+                    ink: category == .advanced ? TVConsoleTheme.label : TVConsoleTheme.faceText,
+                    badge: category == .about && releaseChecker.available != nil
                 )
             },
             selection: $tvSection, isPushed: !tvPath.isEmpty
@@ -481,11 +483,23 @@ struct SettingsView: View {
     @ViewBuilder
     private func settingsDetailContent(for category: SettingsCategory) -> some View {
         if !category.pages.isEmpty {
+            #if os(tvOS)
+            // The TV shows a section's pages one after another instead of links to them, so every
+            // setting is one level closer: scroll down rather than open a page.
+            ForEach(category.pages) { page in
+                Section {
+                } header: {
+                    TVConsoleFormPageTitle(title: page.title, summary: page.summary)
+                }
+                settingsPageContent(for: page)
+            }
+            #else
             Section {
                 ForEach(category.pages) { page in
                     settingsPageLink(page)
                 }
             }
+            #endif
         }
         switch category {
         case .input:
@@ -497,6 +511,9 @@ struct SettingsView: View {
             storageAddonSection
             accountConnectorsSection
         case .about:
+            #if os(tvOS)
+            TVReleaseCheckSection()
+            #endif
             aboutSection
             thanksSection
         default:
@@ -1591,10 +1608,7 @@ struct SettingsView: View {
 
     private var interfaceSessionsSection: some View {
         Section {
-            // The counter is drawn by the iOS stream controls.
-            #if !os(tvOS)
             Toggle("Session Counter", isOn: $store.settings.sessionCounterEnabled)
-            #endif
             Toggle("Session Report", isOn: $store.settings.showSessionReportAfterStream)
             Toggle("Chime When Ready", isOn: $store.settings.queueReadySound)
             #if !os(tvOS)
@@ -1604,7 +1618,7 @@ struct SettingsView: View {
             Text("Sessions")
         } footer: {
             #if os(tvOS)
-            Text("The session report appears after a stream ends and scores how the connection held up. The chime plays once when a rig frees up, so you can look away while you wait for a long queue.")
+            Text("The session counter shows time left (Free) or time played against the session limit in the stream menu and stats strip, and warns 30, 10, 5, 3 and 1 minutes before the limit. The session report appears after a stream ends and scores how the connection held up. The chime plays once when a rig frees up, so you can look away while you wait for a long queue.")
             #else
             Text("The session report appears after a stream ends and scores how the connection held up. The chime plays once when a rig frees up, so you can put the phone down while you wait for a long queue.")
             #endif
@@ -1628,7 +1642,7 @@ struct SettingsView: View {
             Text("Privacy")
         } footer: {
             #if os(tvOS)
-            Text("OpenNOW does not run usage analytics. Diagnostics stay on this Apple TV.")
+            Text("OpenNOW does not run usage analytics. Diagnostics stay on this Apple TV. Unless you turn it off in About, it asks GitHub at most twice a day whether a newer release is out, without anything about you or your account.")
             #else
             Text("OpenNOW does not run usage analytics. Diagnostics leave this device only when you choose to export, upload logs, or submit a problem report.")
             #endif

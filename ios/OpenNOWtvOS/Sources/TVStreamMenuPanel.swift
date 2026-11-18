@@ -51,7 +51,8 @@ struct TVStreamMenuPanel: View {
         var server = session.zone.isEmpty ? "Server not reported" : session.zone
         if let address = session.serverIp, !address.isEmpty { server += " (\(address))" }
         let gpu = session.gpuType?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        return gpu.isEmpty ? server : "\(server) · \(gpu)"
+        let line = gpu.isEmpty ? server : "\(server) · \(gpu)"
+        return coordinator.sessionClock.map { "\(line) · \($0)" } ?? line
     }
 
     private var rows: some View {

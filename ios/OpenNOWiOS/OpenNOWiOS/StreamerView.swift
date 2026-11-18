@@ -347,83 +347,6 @@ func nativeStreamShouldPreserveMediaAfterSignalingFailure(
 }
 #endif
 
-enum StreamSessionTimerMode: Equatable {
-    case countdown
-    case stopwatch
-}
-
-struct StreamSessionLimit: Equatable {
-    let tierLabel: String
-    let limitHours: Int
-    let mode: StreamSessionTimerMode
-
-    var limitSeconds: Int {
-        limitHours * 60 * 60
-    }
-}
-
-struct StreamSessionTimerSnapshot: Equatable {
-    let elapsedSeconds: Int
-    let remainingSeconds: Int
-    let progress: Double
-
-    var isWarning: Bool {
-        remainingSeconds <= 10 * 60
-    }
-}
-
-let streamSessionWarningThresholdsSeconds = [
-    30 * 60,
-    10 * 60,
-    5 * 60,
-    3 * 60,
-    60
-]
-
-func streamSessionLimit(for membershipTier: String?) -> StreamSessionLimit {
-    switch StreamSettingsResolver.plan(for: membershipTier) {
-    case .free:
-        return StreamSessionLimit(tierLabel: "Free", limitHours: 1, mode: .countdown)
-    case .priority:
-        return StreamSessionLimit(tierLabel: "Performance", limitHours: 6, mode: .stopwatch)
-    case .ultimate:
-        return StreamSessionLimit(tierLabel: "Ultimate", limitHours: 8, mode: .stopwatch)
-    }
-}
-
-func streamSessionTimerSnapshot(
-    limit: StreamSessionLimit,
-    startedAt: Date,
-    now: Date = Date()
-) -> StreamSessionTimerSnapshot {
-    let elapsedSeconds = max(0, Int(now.timeIntervalSince(startedAt)))
-    let remainingSeconds = max(0, limit.limitSeconds - elapsedSeconds)
-    let progress = limit.limitSeconds > 0
-        ? min(max(Double(elapsedSeconds) / Double(limit.limitSeconds), 0), 1)
-        : 0
-    return StreamSessionTimerSnapshot(
-        elapsedSeconds: elapsedSeconds,
-        remainingSeconds: remainingSeconds,
-        progress: progress
-    )
-}
-
-struct StreamSessionWarningTracker: Equatable {
-    private(set) var previousRemainingSeconds: Int?
-    private(set) var warnedThresholds: Set<Int> = []
-
-    mutating func nextWarning(remainingSeconds: Int) -> Int? {
-        defer { previousRemainingSeconds = remainingSeconds }
-        guard let previousRemainingSeconds else { return nil }
-        guard let crossedThreshold = streamSessionWarningThresholdsSeconds
-            .filter({ previousRemainingSeconds > $0 && remainingSeconds <= $0 })
-            .min() else {
-            return nil
-        }
-        return warnedThresholds.insert(crossedThreshold).inserted ? crossedThreshold : nil
-    }
-}
-
 func streamTouchLayoutProfile(gameTitle: String, settings: AppSettings) -> String {
     NativeTouchSupport.touchLayoutProfile(gameTitle: gameTitle, settings: settings)
 }
@@ -4677,9 +4600,7 @@ final class NativeStreamCoordinator: NSObject, ObservableObject {
     }
 
     private func presentSessionWarning(thresholdSeconds: Int) {
-        let minutes = thresholdSeconds / 60
-        let interval = minutes == 1 ? "1 minute" : "\(minutes) minutes"
-        let message = "\(interval) left in this session"
+        let message = streamSessionWarningText(thresholdSeconds: thresholdSeconds)
         sessionWarningDismissTask?.cancel()
         sessionWarningText = message
         UIAccessibility.post(notification: .announcement, argument: message)
@@ -4703,22 +4624,7 @@ final class NativeStreamCoordinator: NSObject, ObservableObject {
         snapshot: StreamSessionTimerSnapshot,
         limit: StreamSessionLimit
     ) -> String {
-        switch limit.mode {
-        case .countdown:
-            return "\(formatClock(snapshot.remainingSeconds)) left"
-        case .stopwatch:
-            return "\(formatClock(snapshot.elapsedSeconds)) / \(limit.limitHours)h"
-        }
-    }
-
-    private static func formatClock(_ secondsValue: Int) -> String {
-        let hours = secondsValue / 3_600
-        let minutes = (secondsValue % 3_600) / 60
-        let seconds = secondsValue % 60
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
-        }
-        return String(format: "%02d:%02d", minutes, seconds)
+        streamSessionTimerText(snapshot: snapshot, limit: limit)
     }
 
     private func updateStats(from report: RTCStatisticsReport) {

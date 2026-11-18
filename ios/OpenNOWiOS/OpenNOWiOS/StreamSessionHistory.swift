@@ -66,6 +66,16 @@ struct StreamSessionRecord: Codable, Equatable, Identifiable {
         return "\(seconds / 60)m \(seconds % 60)s"
     }
     var status: String { endedAt == nil ? "Active" : interrupted ? "Interrupted" : "Ended" }
+
+    /// Time played of the game called `title`, over `records`. Records keep only the title, so
+    /// games are told apart by title, ignoring case and surrounding spaces.
+    static func playedDuration(of title: String, in records: [StreamSessionRecord]) -> TimeInterval {
+        let key = title.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !key.isEmpty else { return 0 }
+        return records
+            .filter { $0.gameTitle.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == key }
+            .reduce(0) { $0 + $1.duration }
+    }
 }
 
 /// Local history contains display metadata only, with bounded storage and periodic checkpoints.
@@ -140,8 +150,13 @@ extension StreamSessionHistoryStore {
         var shortRun = record("Fortnite", ago: 86_400 * 4, minutes: 12, resolution: "1920x1080", fps: 120,
                               codec: "H.264", hdr: false)
         shortRun.endedAt = shortRun.updatedAt
+        var nightDrive = record("Night Drive", ago: 86_400 * 2 + 7_200, minutes: 132)
+        nightDrive.endedAt = nightDrive.updatedAt
+        var aimlabs = record("Aimlabs", ago: 86_400 * 3, minutes: 48, fps: 120)
+        aimlabs.endedAt = aimlabs.updatedAt
         holdsSamples = true
-        records = [record("Forza Horizon 5", ago: 25 * 60, minutes: 25), interrupted, finished, shortRun]
+        records = [record("Forza Horizon 5", ago: 25 * 60, minutes: 25), interrupted, finished, nightDrive,
+                   aimlabs, shortRun]
     }
 }
 #endif

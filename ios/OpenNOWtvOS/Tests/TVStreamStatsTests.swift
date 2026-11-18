@@ -127,3 +127,32 @@ final class TVStreamStatsTests: XCTestCase {
         XCTAssertEqual(sample().soundText, "–")
     }
 }
+
+final class TVStreamDeliveredTests: XCTestCase {
+    func testDeliveredNamesWhatTheRigAgreedTo() {
+        let profile = NegotiatedStreamProfile(resolution: "2560x1440", fps: 120, codec: "h265", colorQuality: nil,
+                                              enableL4S: true, enableReflex: false)
+        XCTAssertEqual(profile.tvDeliveredText(features: nil), "2560x1440 · 120 fps · H265 · L4S")
+        let features = StreamingFeatures(reflex: true, bitDepth: 10, chromaFormat: nil, enabledL4S: false, trueHdr: true)
+        XCTAssertEqual(profile.tvDeliveredText(features: features), "2560x1440 · 120 fps · H265 · HDR · Reflex")
+    }
+
+    func testDeliveredIsNilWithoutAStreamDescription() {
+        XCTAssertNil(NegotiatedStreamProfile(resolution: nil, fps: nil, codec: nil, colorQuality: nil,
+                                             enableL4S: true, enableReflex: true).tvDeliveredText(features: nil))
+    }
+}
+
+final class StreamSessionTimerTextTests: XCTestCase {
+    func testCountdownAndStopwatchText() {
+        let free = streamSessionLimit(for: "FREE")
+        let start = Date(timeIntervalSince1970: 0)
+        let free42 = streamSessionTimerSnapshot(limit: free, startedAt: start, now: start.addingTimeInterval(42 * 60))
+        XCTAssertEqual(streamSessionTimerText(snapshot: free42, limit: free), "18:00 left")
+        let ultimate = streamSessionLimit(for: "ULTIMATE")
+        let long = streamSessionTimerSnapshot(limit: ultimate, startedAt: start, now: start.addingTimeInterval(3_725))
+        XCTAssertEqual(streamSessionTimerText(snapshot: long, limit: ultimate), "1:02:05 / 8h")
+        XCTAssertEqual(streamSessionWarningText(thresholdSeconds: 60), "1 minute left in this session")
+        XCTAssertEqual(streamSessionWarningText(thresholdSeconds: 600), "10 minutes left in this session")
+    }
+}

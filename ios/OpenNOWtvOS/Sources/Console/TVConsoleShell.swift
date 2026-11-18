@@ -25,10 +25,22 @@ struct TVConsoleShell<Page: View>: View {
         .environmentObject(state)
         .onPreferenceChange(TVConsoleHintsKey.self) { hints = $0 }
         .onReceive(input.presses, perform: handle)
+        .onChange(of: dockFocus) { previous, focused in dockFocusChanged(from: previous, to: focused) }
         .onExitCommand(perform: exitAction)
         .modifier(TVConsoleFailurePrompt())
         .onAppear { input.start() }
         .onDisappear { input.stop() }
+        .task { await checkForRelease() }
+    }
+
+    private func checkForRelease() async {
+        #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--opennow-update-preview") {
+            TVReleaseChecker.shared.installPreview()
+            return
+        }
+        #endif
+        await TVReleaseChecker.shared.checkIfDue()
     }
 
     private var chrome: some View {
@@ -54,15 +66,31 @@ struct TVConsoleShell<Page: View>: View {
         .ignoresSafeArea()
     }
 
-    /// Back on a page moves focus to the dock, the way it reaches the tab bar in a tab view.
-    /// Home and the dock have nothing behind them, so there the system takes Back and leaves the app.
+    /// Back on a page moves focus to the dock, the way it reaches the tab bar in a tab view, and
+    /// Back on the dock goes Home. Only Home has nothing behind it, so there the system takes Back
+    /// and leaves the app.
     private var exitAction: (() -> Void)? {
-        guard route != .home, dockFocus == nil, !hints.handlesBack else { return nil }
+        guard route != .home, !hints.handlesBack else { return nil }
+        if dockFocus != nil {
+            return { dockFocus = .home }
+        }
         return {
             // A pushed page normally pops before this runs. Popping here covers the case where
             // this handler is asked first, so Back never skips a level.
             if !TVConsoleWindow.popNavigation() { dockFocus = route }
         }
+    }
+
+    /// The dock is a tab bar: focus entering it lands on the current page's item, wherever it came
+    /// down from, and moving along it switches the page.
+    private func dockFocusChanged(from previous: TVConsoleRoute?, to focused: TVConsoleRoute?) {
+        guard let focused else { return }
+        if previous == nil, focused != route {
+            // Down from the page picks the item under the old focus; the current page's is meant.
+            dockFocus = route
+            return
+        }
+        if route != focused { route = focused }
     }
 
     private func handle(_ press: TVConsoleInput.Press) {
@@ -83,6 +111,8 @@ struct TVConsoleShell<Page: View>: View {
         let routes = TVConsoleRoute.allCases
         guard let index = routes.firstIndex(of: route), routes.indices.contains(index + offset) else { return }
         route = routes[index + offset]
+        // With focus on the dock it follows the page, so the dock does not switch back.
+        if dockFocus != nil { dockFocus = route }
     }
 }
 

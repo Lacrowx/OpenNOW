@@ -16,7 +16,7 @@ struct TVConsoleGameDetailView: View {
     }
 
     private enum Panel: String, Identifiable {
-        case stores, more
+        case stores, more, about
         var id: String { rawValue }
     }
 
@@ -130,6 +130,8 @@ struct TVConsoleGameDetailView: View {
                 )
             case .more:
                 TVConsoleChoiceSheet(eyebrow: "GAME", title: "More", description: game.title, choices: moreChoices)
+            case .about:
+                TVConsoleGameAboutSheet(game: game, description: fullDescription, facts: aboutFacts(options: options))
             }
         }
     }
@@ -177,7 +179,7 @@ struct TVConsoleGameDetailView: View {
 
     private func heroCopy(options: [GameLaunchOption]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            let eyebrow = ([game.publisher ?? game.developer ?? ""]
+            let eyebrow = (game.consoleMakers
                 + gameMetadataDisplayLabels([game.genre] + (game.tags ?? [])).prefix(2))
                 .filter { !$0.isEmpty && $0 != "Cloud Game" }
                 .joined(separator: " · ")
@@ -195,8 +197,7 @@ struct TVConsoleGameDetailView: View {
                 .lineLimit(2)
                 .minimumScaleFactor(0.6)
                 .accessibilityAddTraits(.isHeader)
-            if let description = [game.longDescription, game.summary]
-                .compactMap({ $0?.trimmingCharacters(in: .whitespacesAndNewlines) }).first(where: { !$0.isEmpty }) {
+            if let description = fullDescription {
                 Text(description)
                     .font(TVConsoleTheme.display(20, weight: 600))
                     .lineSpacing(2)
@@ -214,21 +215,59 @@ struct TVConsoleGameDetailView: View {
                     .lineLimit(1)
                     .padding(.top, 14)
             }
+            let playtime = store.consolePlaytime(of: game)
+            if !game.capabilityBadges.isEmpty || playtime != nil {
+                HStack(spacing: 18) {
+                    if !game.capabilityBadges.isEmpty {
+                        TVConsoleFeatureChips(labels: game.capabilityBadges)
+                    }
+                    if let playtime {
+                        Text("You played \(playtime) on this Apple TV")
+                            .font(TVConsoleTheme.display(17, weight: 800))
+                            .foregroundStyle(TVConsoleTheme.label)
+                            .lineLimit(1)
+                    }
+                }
+                .padding(.top, 14)
+            }
         }
         .frame(width: 860, alignment: .leading)
     }
 
-    /// Release, play type, age rating and controls: what the old details sheet listed in rows.
-    private func facts(options: [GameLaunchOption]) -> String {
+    private var fullDescription: String? {
+        [game.longDescription, game.summary]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+    }
+
+    /// Every fact the details know, for the "About this game" panel.
+    private func aboutFacts(options: [GameLaunchOption]) -> [(label: String, value: String)] {
         let controls = gameMetadataDisplayLabels(Array(Set(options.flatMap { $0.supportedControls ?? [] })).sorted())
-        return [
-            game.releaseDate ?? "",
-            game.playType.map(gameMetadataDisplayLabel) ?? "",
-            GFNContentRatingParser.ageBadge(from: game.contentRatings) ?? "",
-            controls.joined(separator: ", "),
+        let rows: [(String, String?)] = [
+            ("Publisher", game.publisher),
+            ("Developer", game.developer),
+            ("Release", game.releaseDate),
+            ("Genre", gameMetadataDisplayLabels([game.genre] + (game.tags ?? [])).filter { $0 != "Cloud Game" }
+                .joined(separator: ", ")),
+            ("Play type", game.playType.map(gameMetadataDisplayLabel)),
+            ("Age rating", GFNContentRatingParser.ageBadge(from: game.contentRatings)),
+            ("Controls", controls.joined(separator: ", ")),
+            ("Features", gameMetadataDisplayLabels(game.featureLabels ?? []).joined(separator: ", ")),
+            ("Membership", game.membershipTierLabel.map(gameMetadataDisplayLabel)),
+            ("Last played", game.lastPlayedAt?.formatted(date: .abbreviated, time: .omitted)),
+            ("On this Apple TV", store.consolePlaytime(of: game)),
         ]
-        .filter { !$0.isEmpty }
-        .joined(separator: " · ")
+        return rows.compactMap { label, value in
+            guard let value, !value.isEmpty else { return nil }
+            return (label, value)
+        }
+    }
+
+    /// The shared facts line, plus when the game was last played.
+    private func facts(options: [GameLaunchOption]) -> String {
+        [TVConsoleGameFacts.factsLine(game, options: options), TVConsoleGameFacts.lastPlayed(game.lastPlayedAt) ?? ""]
+            .filter { !$0.isEmpty }
+            .joined(separator: " · ")
     }
 
     // MARK: Stores
@@ -301,7 +340,10 @@ struct TVConsoleGameDetailView: View {
     // MARK: More
 
     private func moreChoices(options: [GameLaunchOption], selected: GameLaunchOption?) -> [TVConsoleChoice] {
-        var choices: [TVConsoleChoice] = []
+        var choices = [TVConsoleChoice(
+            id: "about", label: "About this game", detail: "Full description and every detail",
+            action: { panel = .about }
+        )]
         if options.count > 1, let selected {
             let name = gameStoreDisplayName(selected.storefront)
             let isDefault = selected.id == savedDefault?.id
@@ -371,5 +413,77 @@ struct TVConsoleGameDetailView: View {
                 .foregroundStyle(TVConsoleTheme.label)
         }
         .lineLimit(1)
+    }
+}
+
+extension CloudGame {
+    /// Publisher, and the developer too when it is a different studio.
+    var consoleMakers: [String] {
+        let publisher = publisher?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let developer = developer?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if publisher.isEmpty { return developer.isEmpty ? [] : [developer] }
+        return developer.isEmpty || developer.caseInsensitiveCompare(publisher) == .orderedSame
+            ? [publisher] : [publisher, developer]
+    }
+}
+
+/// "About this game": the full description and every fact, in a right-edge panel. Each block can
+/// take focus, so a description longer than the panel scrolls with the remote.
+private struct TVConsoleGameAboutSheet: View {
+    let game: CloudGame
+    let description: String?
+    let facts: [(label: String, value: String)]
+
+    @FocusState private var focused: Int?
+
+    private var paragraphs: [String] {
+        (description ?? "No description available.")
+            .components(separatedBy: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
+    }
+
+    var body: some View {
+        TVConsoleSheetPanel(eyebrow: "GAME", title: "About this game", description: game.title) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(paragraphs.enumerated()), id: \.offset) { index, paragraph in
+                        Text(paragraph)
+                            .font(TVConsoleTheme.display(19, weight: 600))
+                            .lineSpacing(3)
+                            .foregroundStyle(TVConsoleTheme.label)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(14)
+                            .modifier(TVConsoleSheetRow(focused: focused == index))
+                            .focusable()
+                            .focused($focused, equals: index)
+                    }
+                    VStack(spacing: 10) {
+                        ForEach(facts, id: \.label) { fact in
+                            HStack(alignment: .firstTextBaseline, spacing: 16) {
+                                Text(fact.label)
+                                    .font(TVConsoleTheme.display(17, weight: 700))
+                                    .foregroundStyle(TVConsoleTheme.textMuted)
+                                    .frame(width: 170, alignment: .leading)
+                                Text(fact.value)
+                                    .font(TVConsoleTheme.display(17, weight: 800))
+                                    .foregroundStyle(TVConsoleTheme.label)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Spacer(minLength: 0)
+                            }
+                        }
+                    }
+                    .padding(14)
+                    .modifier(TVConsoleSheetRow(focused: focused == -1))
+                    .focusable()
+                    .focused($focused, equals: -1)
+                    .padding(.top, 10)
+                }
+                .padding(6)
+            }
+            .padding(.top, 22)
+        }
+        .defaultFocus($focused, 0)
     }
 }

@@ -6,7 +6,6 @@ struct LoginView: View {
     @EnvironmentObject private var store: OpenNOWStore
     @State private var signInTask: Task<Void, Never>?
     @State private var showingProviderChooser = false
-    private let qrContext = CIContext()
     #if DEBUG
     /// `--opennow-signin-preview`: a device code to show without contacting NVIDIA.
     var debugPrompt: DeviceLoginPrompt?
@@ -206,14 +205,19 @@ struct LoginView: View {
         .accessibilityLabel("QR code for NVIDIA sign-in")
     }
 
-    private func makeQRCode(_ value: String) -> UIImage? {
-        let filter = CIFilter.qrCodeGenerator()
-        filter.message = Data(value.utf8)
-        filter.correctionLevel = "M"
-        guard let output = filter.outputImage,
-              let image = qrContext.createCGImage(output, from: output.extent) else { return nil }
-        return UIImage(cgImage: image)
-    }
+    private func makeQRCode(_ value: String) -> UIImage? { openNowQRCodeImage(value) }
+}
+
+private let openNowQRContext = CIContext()
+
+/// A QR code of `value`, one pixel per module: draw it with `.interpolation(.none)` and scale it up.
+func openNowQRCodeImage(_ value: String) -> UIImage? {
+    let filter = CIFilter.qrCodeGenerator()
+    filter.message = Data(value.utf8)
+    filter.correctionLevel = "M"
+    guard let output = filter.outputImage,
+          let image = openNowQRContext.createCGImage(output, from: output.extent) else { return nil }
+    return UIImage(cgImage: image)
 }
 
 struct ProviderChooserSheet: View {

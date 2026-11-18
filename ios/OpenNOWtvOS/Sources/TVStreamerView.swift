@@ -147,6 +147,10 @@ private struct TVStreamOverlay: View {
         HStack(spacing: 16) {
             if coordinator.showsClock {
                 TimelineView(.everyMinute) { Text($0.date.formatted(date: .omitted, time: .shortened)) }
+                if coordinator.sessionClock != nil || !coordinator.hudItems.isEmpty { seam }
+            }
+            if let sessionClock = coordinator.sessionClock {
+                Text(sessionClock)
                 if !coordinator.hudItems.isEmpty { seam }
             }
             ForEach(Array(coordinator.hudItems.enumerated()), id: \.offset) { index, item in

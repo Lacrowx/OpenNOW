@@ -164,6 +164,14 @@ struct CloudGame: Identifiable, Codable, Equatable, Sendable {
         }.max()
     }
 
+    /// `lastPlayedDate` as a date; `nil` when it is missing or not an ISO 8601 timestamp.
+    var lastPlayedAt: Date? {
+        guard let raw = lastPlayedDate else { return nil }
+        let parser = ISO8601DateFormatter()
+        parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return parser.date(from: raw) ?? ISO8601DateFormatter().date(from: raw)
+    }
+
     var ownedStorefronts: [String] {
         var seen = Set<String>()
         return launchOptions.filter(\.isOwned).compactMap { option in
@@ -7249,7 +7257,7 @@ final class OpenNOWStore: ObservableObject {
                 storefront: "STEAM", appId: "\(714010 + index)",
                 supportedControls: ["GAMEPAD", "KEYBOARD_MOUSE"],
                 libraryStatus: index == 0 ? "PLATFORM_SYNC" : "NOT_OWNED",
-                lastPlayedDate: index == 0 ? "2026-10-03T14:00:00Z" : nil,
+                lastPlayedDate: index == 0 ? "2026-10-03T14:00:00Z" : index == 3 ? "2026-11-16T20:00:00Z" : nil,
                 storeURL: "https://store.steampowered.com/app/714010"
             )
             let epic = GameLaunchOption(storefront: "EPIC", appId: "\(814010 + index)",
@@ -7263,8 +7271,9 @@ final class OpenNOWStore: ObservableObject {
                 summary: "A preview of the new Store details layout.",
                 longDescription: "OpenNOW brings your GeForce NOW games together. Choose a launcher, check ownership and streaming features, and play when you are ready.",
                 publisher: "Preview Studio", developer: "Preview Studio", releaseDate: "2026",
-                featureLabels: ["HDR", "RTX"], tags: ["Action", "Controller"],
-                stores: ["STEAM", "EPIC"], playType: "Single Player", membershipTierLabel: nil,
+                featureLabels: ["HDR", "RTX", "Reflex"], tags: ["Action", "Controller"],
+                stores: ["STEAM", "EPIC"], playType: "Single Player",
+                membershipTierLabel: index == 1 ? "ULTIMATE" : nil,
                 catalogSectionId: index < 3 ? "section-cbc43218-6ad6-4ff3-8538-bc84f90c796c-preview" : nil,
                 catalogSectionTitle: index < 3 ? "GFN Thursday" : nil,
                 contentRatings: ["ESRB T"], screenshotUrls: index == 0 ? [heroURL] : nil
@@ -7288,6 +7297,9 @@ final class OpenNOWStore: ObservableObject {
     func installDebugLibraryPreview() {
         installDebugStorePreview()
         user = UserProfile(userId: "library-preview", displayName: "Preview", email: nil, membershipTier: "Free")
+        subscription = SubscriptionSnapshot(
+            membershipTier: "FREE", subscriptionType: nil, subscriptionSubType: nil, isGamePlayAllowed: true,
+            isUnlimited: false, remainingHours: 12.5, totalHours: 100, storageAddon: nil)
         libraryGames = allGames
         #if os(tvOS)
         // `--opennow-failure-notice=expired|busy` reports a sample failure, for screenshots.

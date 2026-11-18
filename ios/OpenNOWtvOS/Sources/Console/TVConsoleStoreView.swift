@@ -7,7 +7,6 @@ import SwiftUI
 struct TVConsoleStoreView: View {
     @EnvironmentObject private var store: OpenNOWStore
     @EnvironmentObject private var input: TVConsoleInput
-    @EnvironmentObject private var shell: TVConsoleShellState
     @FocusState private var focus: TVConsoleCatalogFocus?
     @State private var currentID: String?
     @State private var filter = TVConsoleCatalogFilter()
@@ -88,12 +87,6 @@ struct TVConsoleStoreView: View {
             )
             .environmentObject(input)
         }
-        .task {
-            // Home's "Search" hint lands here with the search field ready for Select.
-            guard shell.focusSearchOnArrival else { return }
-            shell.focusSearchOnArrival = false
-            focus = .search
-        }
     }
 
     private func countLabel(shown: Int) -> String {
@@ -149,6 +142,9 @@ struct TVConsoleStoreView: View {
             }
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
+            if !game.capabilityBadges.isEmpty {
+                TVConsoleFeatureChips(labels: game.capabilityBadges)
+            }
             if !stores.isEmpty {
                 Text("AVAILABLE ON")
                     .font(TVConsoleTheme.mono(13, bold: true))

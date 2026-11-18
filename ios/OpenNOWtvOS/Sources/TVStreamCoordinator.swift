@@ -86,6 +86,9 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
     /// A short message over the game, cleared after a few seconds: slow wireless sound, Wi-Fi
     /// trouble, a controller running low.
     @Published private(set) var notice: String?
+    /// Time left or played against the tier's session limit ("12:30 left", "42:10 / 6h"), for the
+    /// menu and the stats strip; nil while Settings turns the session counter off.
+    @Published private(set) var sessionClock: String?
     /// Wi-Fi or Ethernet, for the connecting screen, the menu and the session report.
     @Published private(set) var networkKind: SessionNetworkKind = .unknown
 
@@ -180,6 +183,8 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
     private var batteryWarned: [Int: Int] = [:]
     private var noticeTask: Task<Void, Never>?
     private static let noticeDuration: Duration = .seconds(8)
+    private let sessionLimit: StreamSessionLimit
+    private var sessionWarnings = StreamSessionWarningTracker()
 
     init(session: ActiveSession, settings: AppSettings, membershipTier: String?,
          sessionHistory: StreamSessionHistoryStore?,
@@ -194,6 +199,7 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
         self.settings = settings
         triggerFeels = TVTriggerFeelStore().feels(forGame: session.game.id)
         self.membershipTier = membershipTier
+        sessionLimit = streamSessionLimit(for: membershipTier)
         self.sessionHistory = sessionHistory
         self.onStatsOverlayChange = onStatsOverlayChange
         self.onRuntimeSample = onRuntimeSample
@@ -448,6 +454,16 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
 
     func retry() { stop(); onRetry?() }
 
+    /// The session clock, and a notice as each warning threshold before the limit is crossed.
+    private func updateSessionClock(now: Date = Date()) {
+        guard settings.sessionCounterEnabled else { return }
+        let snapshot = streamSessionTimerSnapshot(limit: sessionLimit, startedAt: session.startedAt, now: now)
+        sessionClock = streamSessionTimerText(snapshot: snapshot, limit: sessionLimit)
+        guard videoActive, let threshold = sessionWarnings.nextWarning(remainingSeconds: snapshot.remainingSeconds)
+        else { return }
+        showNotice(streamSessionWarningText(thresholdSeconds: threshold))
+    }
+
     private func update(_ sample: NativeStreamNVSTSample) {
         guard !stopped, !failed else { return }
         if sample.decoded > 0 {
@@ -470,6 +486,7 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
             TVStreamFigure(label: "Frame rate", value: reading.decodedFPS.map { "\($0) fps" } ?? "–"),
             TVStreamFigure(label: "Bitrate", value: reading.bitrateText ?? "–"),
             TVStreamFigure(label: "Ping", value: ping),
+            TVStreamFigure(label: "Jitter", value: String(format: "%.1f ms", reading.jitterMs)),
             TVStreamFigure(label: "Decode", value: reading.decodeMs.map { String(format: "%.1f ms", $0) } ?? "–"),
             TVStreamFigure(label: "Packets lost", value: "\(sample.lost)"),
             TVStreamFigure(label: "Format", value: sample.bitstream),
@@ -483,7 +500,13 @@ final class TVStreamCoordinator: NSObject, ObservableObject {
             figures.append(TVStreamFigure(label: batteries.count > 1 ? "Controllers" : "Controller",
                                           value: batteries.map(\.label).joined(separator: " · ")))
         }
+        if let delivered = session.negotiatedStreamProfile?.tvDeliveredText(
+            features: session.finalizedStreamingFeatures) {
+            // Last, so a short final row gives its long value the spare cells.
+            figures.append(TVStreamFigure(label: "Delivered", value: delivered))
+        }
         checkBatteries(batteries)
+        updateSessionClock()
         if wifiTrouble.shouldReport(network: networkKind, lossPercent: reading.lossPercent, jitterMs: reading.jitterMs) {
             TVStreamLog.note("wifi trouble: loss=\(reading.lossPercent)% jitter=\(reading.jitterMs)ms")
             showNotice("Wi-Fi is dropping or delaying packets. An Ethernet cable usually keeps the stream steady.")
@@ -719,11 +742,13 @@ extension TVStreamCoordinator {
         }
         videoActive = true
         hudItems = ["119 fps", "24 ms", "48.6 Mbps", "loss 0.1%", "3840x2160"]
+        sessionClock = "42:10 / 6h"
         figures = [
             TVStreamFigure(label: "Video", value: "3840x2160"),
             TVStreamFigure(label: "Frame rate", value: "119 fps"),
             TVStreamFigure(label: "Bitrate", value: "48.6 Mbps"),
             TVStreamFigure(label: "Ping", value: "24 ms"),
+            TVStreamFigure(label: "Jitter", value: "1.8 ms"),
             TVStreamFigure(label: "Decode", value: "5.8 ms"),
             TVStreamFigure(label: "Packets lost", value: "12"),
             TVStreamFigure(label: "Format", value: "10-bit 4:2:0"),
@@ -732,6 +757,7 @@ extension TVStreamCoordinator {
             TVStreamFigure(label: "Network", value: "Wi-Fi"),
             TVStreamFigure(label: "Audio Output", value: "HDMI · 18 ms"),
             TVStreamFigure(label: "Controllers", value: "P1 62% · P2 charging"),
+            TVStreamFigure(label: "Delivered", value: "3840x2160 · 120 fps · H265 · HDR · Reflex"),
         ]
         setMenuVisible(true)
     }

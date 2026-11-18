@@ -149,6 +149,9 @@ struct TVConsoleLibraryView: View {
                 if let owned = game.ownedStorefronts.first {
                     TVConsoleOwnedLabel(store: owned).padding(.top, 16)
                 }
+                if !game.capabilityBadges.isEmpty {
+                    TVConsoleFeatureChips(labels: game.capabilityBadges).padding(.top, 14)
+                }
                 let stores = game.consoleStores
                 if !stores.isEmpty {
                     Text("AVAILABLE ON")
@@ -166,9 +169,10 @@ struct TVConsoleLibraryView: View {
                         .font(TVConsoleTheme.display(18, weight: 600))
                         .lineSpacing(2)
                         .foregroundStyle(TVConsoleTheme.textMuted)
-                        .lineLimit(4)
+                        .lineLimit(3)
                         .padding(.top, 23)
                 }
+                playFacts(game)
             }
             Spacer(minLength: 0)
             if game != nil {
@@ -183,6 +187,35 @@ struct TVConsoleLibraryView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .tvConsoleGlass(radius: 40)
         .accessibilityElement(children: .combine)
+    }
+
+    /// The facts line, when the game was last played and how long it was played here.
+    private func playFacts(_ game: CloudGame) -> some View {
+        let rows = [
+            ("Last played", game.lastPlayedAt?.formatted(date: .abbreviated, time: .omitted)),
+            ("On this Apple TV", store.consolePlaytime(of: game)),
+        ].compactMap { label, value in value.map { (label, $0) } }
+        let facts = TVConsoleGameFacts.factsLine(game, options: game.launchOptions)
+        return VStack(alignment: .leading, spacing: 8) {
+            if !facts.isEmpty {
+                Text(facts.uppercased())
+                    .font(TVConsoleTheme.mono(13))
+                    .tracking(1.04)
+                    .foregroundStyle(TVConsoleTheme.textMuted)
+                    .lineLimit(2)
+                    .padding(.bottom, 4)
+            }
+            ForEach(rows, id: \.0) { label, value in
+                HStack {
+                    Text(label).foregroundStyle(TVConsoleTheme.textMuted)
+                    Spacer(minLength: 12)
+                    Text(value).foregroundStyle(TVConsoleTheme.label)
+                }
+                .font(TVConsoleTheme.display(17, weight: 800))
+                .lineLimit(1)
+            }
+        }
+        .padding(.top, 20)
     }
 
     private func action(_ button: TVConsoleButton, _ label: String) -> some View {

@@ -122,6 +122,12 @@ struct TVConsoleTopBar: View {
                     .frame(width: 9, height: 9)
                 Text(store.consoleRegionName ?? "Automatic region")
             }
+            if let playtime = TVConsoleGameFacts.playtimeLeft(store.subscription) {
+                seam
+                Text(playtime.text)
+                    .foregroundStyle(playtime.isLow ? TVConsoleTheme.coral : TVConsoleTheme.label)
+                    .accessibilityLabel("Playtime this month: \(playtime.text)")
+            }
             seam
             TimelineView(.everyMinute) { context in
                 Text(context.date.formatted(date: .omitted, time: .shortened))
@@ -197,6 +203,7 @@ struct TVConsoleDock: View {
     let focus: FocusState<TVConsoleRoute?>.Binding
 
     @Environment(\.openNowAccent) private var accent
+    @ObservedObject private var releases = TVReleaseChecker.shared
 
     var body: some View {
         HStack(spacing: 4) {
@@ -230,6 +237,15 @@ struct TVConsoleDock: View {
                 .scaledToFit()
                 .frame(width: 26, height: 26)
                 .frame(width: 30, height: 30)
+                .overlay(alignment: .topTrailing) {
+                    // A newer release is out: Settings → About says how to update.
+                    if item == .settings, releases.available != nil {
+                        Circle().fill(TVConsoleTheme.mint)
+                            .overlay(Circle().strokeBorder(TVConsoleTheme.shell, lineWidth: 2))
+                            .frame(width: 12, height: 12)
+                            .offset(x: 4, y: -3)
+                    }
+                }
             if current {
                 Text(item.label).font(TVConsoleTheme.display(17))
             }

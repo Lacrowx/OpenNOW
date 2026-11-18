@@ -117,3 +117,19 @@ extension NativeStreamNVSTSample {
     /// The stream menu's "Sound" figure.
     var soundText: String { audioFormat ?? "–" }
 }
+
+extension NegotiatedStreamProfile {
+    /// What the rig agreed to, for the stream menu: "2560x1440 · 120 fps · H265 · HDR · Reflex".
+    /// HDR, Reflex and L4S come from the session's final features when it reports them.
+    func tvDeliveredText(features: StreamingFeatures?) -> String? {
+        var parts: [String] = []
+        if let resolution, !resolution.isEmpty { parts.append(resolution) }
+        if let fps, fps > 0 { parts.append("\(fps) fps") }
+        if let codec, !codec.isEmpty { parts.append(codec.uppercased()) }
+        guard !parts.isEmpty else { return nil }
+        if features?.trueHdr == true { parts.append("HDR") }
+        if features?.reflex ?? enableReflex ?? false { parts.append("Reflex") }
+        if features?.enabledL4S ?? enableL4S ?? false { parts.append("L4S") }
+        return parts.joined(separator: " · ")
+    }
+}

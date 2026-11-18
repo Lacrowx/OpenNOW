@@ -7,6 +7,8 @@ struct TVConsoleSettingsSection<ID: Hashable>: Identifiable {
     let symbol: String
     let color: Color
     var ink: Color = TVConsoleTheme.faceText
+    /// Something new waits in the section (a newer release in About).
+    var badge = false
 }
 
 /// The console Settings (`opennow-qt/qml/screens/SettingsScreen.qml`): a rail of sections beside a
@@ -100,6 +102,11 @@ private struct TVConsoleSettingsRailRow<ID: Hashable>: View {
                     .foregroundStyle(selected ? TVConsoleTheme.faceText : TVConsoleTheme.label)
                     .lineLimit(1)
                 Spacer(minLength: 0)
+                if section.badge {
+                    Circle().fill(TVConsoleTheme.mint).frame(width: 12, height: 12)
+                        .padding(.trailing, 22)
+                        .accessibilityLabel("New")
+                }
             }
             .padding(.leading, 16)
             .frame(height: 58)

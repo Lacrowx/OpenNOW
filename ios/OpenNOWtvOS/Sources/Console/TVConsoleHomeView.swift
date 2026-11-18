@@ -109,6 +109,7 @@ struct TVConsoleHomeView: View {
                 position: (model.shownIDs.firstIndex(of: game.id) ?? 0) + 1,
                 isWide: model.wideIDs.contains(game.id),
                 canRemove: game.id != model.runningID,
+                play: playChoice(for: game, model: model),
                 onMove: { closeMenu { beginMove(game.id, model: model) } },
                 onSize: { setWide($0, for: game.id, model: model) },
                 onDetails: { closeMenu { selectedGameForDetails = game } },
@@ -124,7 +125,8 @@ struct TVConsoleHomeView: View {
     // MARK: Header
 
     private func header(game: CloudGame?, isEmpty: Bool) -> some View {
-        ZStack(alignment: .bottomTrailing) {
+        // Side by side, so a long title is cut short instead of running under the facts.
+        HStack(alignment: .bottom, spacing: 24) {
             VStack(alignment: .leading, spacing: 0) {
                 Text(game.map(eyebrow) ?? (isEmpty ? "HOME" : "ADD A GAME"))
                     .font(TVConsoleTheme.mono(14))
@@ -138,17 +140,36 @@ struct TVConsoleHomeView: View {
             .lineLimit(1)
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            if let owned = game?.ownedStorefronts.first {
-                HStack(spacing: 8) {
-                    Circle().fill(TVConsoleTheme.mint).frame(width: 9, height: 9)
-                    Text("Owned on \(gameStoreDisplayName(owned))")
-                        .font(TVConsoleTheme.display(17, weight: 800))
-                        .foregroundStyle(TVConsoleTheme.mint)
-                }
-                .padding(.bottom, 9)
+            if let game {
+                headerFacts(game).padding(.bottom, 9)
             }
         }
         .accessibilityHidden(true)
+    }
+
+    /// Lower right of the header: ownership, when it was last played, and its feature badges.
+    private func headerFacts(_ game: CloudGame) -> some View {
+        HStack(spacing: 14) {
+            if !game.capabilityBadges.isEmpty {
+                TVConsoleFeatureChips(labels: game.capabilityBadges)
+            }
+            HStack(spacing: 8) {
+                if let owned = game.ownedStorefronts.first {
+                    Circle().fill(TVConsoleTheme.mint).frame(width: 9, height: 9)
+                    Text("Owned on \(gameStoreDisplayName(owned))")
+                        .foregroundStyle(TVConsoleTheme.mint)
+                }
+                if let played = TVConsoleGameFacts.lastPlayed(game.lastPlayedAt) {
+                    if !game.ownedStorefronts.isEmpty {
+                        Text("·").foregroundStyle(TVConsoleTheme.textMuted)
+                    }
+                    Text(played).foregroundStyle(TVConsoleTheme.label)
+                }
+            }
+            .font(TVConsoleTheme.display(17, weight: 800))
+        }
+        .lineLimit(1)
+        .fixedSize()
     }
 
     private func eyebrow(for game: CloudGame) -> String {
@@ -269,6 +290,18 @@ struct TVConsoleHomeView: View {
         } else {
             openLibrary()
         }
+    }
+
+    /// The tile menu's Play: the store the details' Play button would use, unless the game is the
+    /// running one (Select resumes it) or the details would refuse to start it.
+    private func playChoice(for game: CloudGame, model: Model) -> (store: String, action: () -> Void)? {
+        guard game.id != model.runningID, store.launchRestrictionMessage(for: game) == nil,
+              OpenNOWPlatform.supportsEmbeddedStreamer,
+              let option = store.defaultLaunchOption(for: game) ?? store.launchOptions(for: game).first
+        else { return nil }
+        return (gameStoreDisplayName(option.storefront), {
+            closeMenu { pendingLaunchRequest = GameLaunchRequest(game: game, launchOption: option) }
+        })
     }
 
     private func openMenu(for id: String, model: Model) {
